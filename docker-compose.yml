@@ -2,7 +2,6 @@ services:
   agent:
     build:
       context: ./agent
-    container_name: email-otp-autofill-agent
     restart: unless-stopped
     environment:
       OTP_AGENT_HOST: 0.0.0.0

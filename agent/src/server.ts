@@ -58,9 +58,9 @@ function parseProviders(raw: string | undefined): ("qq" | "outlook" | "gmail" | 
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const set = new Set<"qq" | "outlook" | "gmail">();
+  const set = new Set<"qq" | "outlook" | "gmail" | "imap">();
   for (const p of parts) {
-    if (p === "qq" || p === "outlook" || p === "gmail") set.add(p);
+    if (p === "qq" || p === "outlook" || p === "gmail" || p === "imap") set.add(p);
   }
   return set.size ? [...set] : undefined;
 }
@@ -216,6 +216,7 @@ export async function startServer() {
         pollIntervalMs: cfg.pollIntervalMs,
         includeSpam: cfg.includeSpam,
         qq: { accounts: qqAccounts },
+        imap: { accounts: cfg.imap.accounts.map((a) => ({ email: a.email, host: a.host, port: a.port, secure: a.secure, username: a.username, configured: true })) },
         outlook: {
           mode: cfg.outlook.mode,
           // Client ID is now an instance-wide admin setting (not per-user).

@@ -236,6 +236,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // short, per-tab fast poll and only accepts messages received after the action.
 let otpContextTimer = null;
 let lastContextSignature = "";
+let lastOtpRequestedAt = 0;
+let lastOtpRequestExpiresAt = 0;
 
 function otpFieldScore(el) {
   if (!(el instanceof HTMLInputElement) || !isVisible(el) || el.disabled || el.readOnly) return -100;
@@ -252,18 +254,23 @@ function otpFieldScore(el) {
 }
 
 function detectOtpContext(requestedAt = 0) {
+  if (requestedAt > 0) {
+    lastOtpRequestedAt = requestedAt;
+    lastOtpRequestExpiresAt = requestedAt + 90_000;
+  }
+  const effectiveRequestedAt = Date.now() < lastOtpRequestExpiresAt ? lastOtpRequestedAt : 0;
   const inputs = Array.from(document.querySelectorAll("input")).filter((el) => otpFieldScore(el) >= 45);
   if (!inputs.length) return;
   const oneChar = inputs.filter((el) => el.maxLength === 1);
   const expectedLength = oneChar.length >= 4 && oneChar.length <= 10
     ? oneChar.length
     : Math.max(0, ...inputs.map((el) => el.maxLength > 0 ? el.maxLength : 0));
-  const signature = `${location.href}|${expectedLength}|${requestedAt}`;
+  const signature = `${location.href}|${expectedLength}|${effectiveRequestedAt}`;
   if (!requestedAt && signature === lastContextSignature) return;
   lastContextSignature = signature;
   chrome.runtime.sendMessage({
     type: "OTP_CONTEXT_ACTIVE",
-    context: { url: location.href, title: document.title, expectedLength, requestedAt }
+    context: { url: location.href, title: document.title, expectedLength, requestedAt: effectiveRequestedAt }
   }).catch(() => {});
 }
 

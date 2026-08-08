@@ -92,6 +92,14 @@ describe("OtpStore.validList / latest", () => {
     assert.deepEqual(valid.map((x) => x.code), ["555555"]);
   });
 
+  it("supports the generic IMAP provider", () => {
+    const store = new OtpStore();
+    store.add({ provider: "imap", userId: "u1", account: "user@example.com", code: "654321", receivedAt: Date.now() });
+    const item = store.latest({ userId: "u1", providers: ["imap"], maxAgeMs: 120_000 });
+    assert.equal(item?.code, "654321");
+    assert.equal(item?.provider, "imap");
+  });
+
   it("filters by provider and account", () => {
     const store = new OtpStore();
     store.add(makeInput({ provider: "qq", account: "a@qq.com", code: "111111" }));

@@ -26,6 +26,9 @@ async function getSettings() {
     agentBaseUrl: raw.agentBaseUrl || DEFAULTS.agentBaseUrl,
     maxAgeSec: Number.isFinite(raw.maxAgeSec) ? raw.maxAgeSec : DEFAULTS.maxAgeSec,
     providers: Array.isArray(raw.providers) && raw.providers.length ? raw.providers : DEFAULTS.providers,
+    autoFill: typeof raw.autoFill === "boolean" ? raw.autoFill : DEFAULTS.autoFill,
+    autoFillDelayMs: Number.isFinite(raw.autoFillDelayMs) ? raw.autoFillDelayMs : DEFAULTS.autoFillDelayMs,
+    fastPollSec: Number.isFinite(raw.fastPollSec) ? raw.fastPollSec : DEFAULTS.fastPollSec,
     authToken: typeof raw.authToken === "string" ? raw.authToken : ""
   };
 }
@@ -156,10 +159,15 @@ async function autoFillTab(tabId, context = {}) {
   if (!settings.autoFill) return { ok: false, error: "auto_fill_disabled" };
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab) return { ok: false, error: "tab_closed" };
-  const { item } = await fetchOtpsForTab(tab.url || "");
-  if (!item || Number(item.receivedAt || 0) < Number(context.requestedAt || 0)) {
-    return { ok: false, error: "no_matching_otp" };
+  const { items } = await fetchOtpsForTab(tab.url || "");
+  const requestedAt = Number(context.requestedAt || 0);
+  const item = items.find((candidate) => Number(candidate && candidate.receivedAt || 0) >= requestedAt);
+  if (!item) return { ok: false, error: "no_matching_otp" };
+  if (settings.autoFillDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(2000, settings.autoFillDelayMs)));
   }
+  const current = autoFillState.get(tabId);
+  if (!current || current.expiresAt !== context.expiresAt) return { ok: false, error: "context_replaced" };
   const result = await chrome.tabs.sendMessage(tabId, {
     type: "OTP_AUTO_FILL",
     code: item.code,
@@ -172,25 +180,29 @@ async function autoFillTab(tabId, context = {}) {
   return { ok: false, error: result && result.error || "fill_failed" };
 }
 
-function startFastAutoFill(tabId, context = {}) {
+async function startFastAutoFill(tabId, context = {}) {
   const previous = autoFillState.get(tabId);
-  if (previous) clearInterval(previous.timer);
+  if (previous && previous.timer) clearInterval(previous.timer);
   const state = { ...context, expiresAt: Date.now() + 90_000, timer: null };
   const tick = async () => {
+    if (autoFillState.get(tabId) !== state) return;
     if (Date.now() >= state.expiresAt) {
-      clearInterval(state.timer);
+      if (state.timer) clearInterval(state.timer);
       autoFillState.delete(tabId);
       return;
     }
     const result = await autoFillTab(tabId, state);
-    if (result.ok) {
-      clearInterval(state.timer);
+    if (result.ok && autoFillState.get(tabId) === state) {
+      if (state.timer) clearInterval(state.timer);
       autoFillState.delete(tabId);
     }
   };
-  state.timer = setInterval(tick, Math.max(1, Number(DEFAULTS.fastPollSec)) * 1000);
+  let settings;
+  try { settings = await getSettings(); } catch { settings = DEFAULTS; }
+  if (!settings.autoFill) return;
+  state.timer = setInterval(tick, Math.max(1, Number(settings.fastPollSec)) * 1000);
   autoFillState.set(tabId, state);
-  tick().catch(() => {});
+  void tick();
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -248,7 +260,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     if (msg.type === "OTP_CONTEXT_ACTIVE") {
       const tabId = _sender && _sender.tab && _sender.tab.id;
-      if (tabId) startFastAutoFill(tabId, msg.context || {});
+      if (tabId) void startFastAutoFill(tabId, msg.context || {});
       sendResponse({ ok: true });
       return;
     }
