@@ -217,9 +217,9 @@ function selectAccount(acc) {
     $("acctEmail").value = acc.email;
     $("acctEmail").disabled = true; // email is the key; change = add new
     $("acctSecret").value = "";
-    $("acctRemove").hidden = false;
     setMsg("acctMsg", "");
     renderAccountFormByType("qq");
+    $("acctRemove").hidden = false;
     showPanel("panelAccount");
     // Pre-fill the stored secret (masked as dots, revealable via the eye).
     revealAccountSecret(acc);
@@ -244,7 +244,7 @@ async function renderAccountFormByType(type) {
   // Keep acctActions visible for all types; hide Save for OAuth types.
   $("acctActions").hidden = false;
   $("acctSave").hidden = !(isQq || isImap);
-  $("acctRemove").hidden = true; // only shown for existing QQ accounts via selectAccount
+  $("acctRemove").hidden = true; // selectAccount enables it for existing QQ/IMAP accounts
   if (isOutlook) {
     // Switch user to OAuth mode on the server, then refresh state.
     try { await bg({ type: "BG_OUTLOOK_CONFIG", payload: { mode: "oauth" } }); } catch { /* ignore */ }

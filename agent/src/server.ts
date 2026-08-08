@@ -339,7 +339,7 @@ export async function startServer() {
   // ---- reveal secret -----------------------------------------------------
   app.post("/v1/secret/reveal", async (req, res) => {
     const Body = z.object({
-      kind: z.enum(["qq", "imap"]),
+      kind: z.literal("qq"),
       email: z.string().email(),
     });
     const body = Body.safeParse(req.body);
@@ -719,6 +719,7 @@ export async function startServer() {
     const mgr = await registry.getOrCreate(userId);
     const out: Array<{ type: string; email?: string }> = [];
     for (const a of cfg.qq.accounts) out.push({ type: "qq", email: a.email });
+    for (const a of cfg.imap.accounts) out.push({ type: "imap", email: a.email });
     if (cfg.outlook.mode === "oauth" && getOutlookClientId() && (await mgr.getOutlookOAuth().hasRefreshToken())) {
       const email = await mgr.getOutlookOAuth().getAccountEmail();
       out.push({ type: "outlook_oauth", email: email || undefined });

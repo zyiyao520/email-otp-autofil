@@ -422,7 +422,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "BG_REVEAL_SECRET") {
       const json = await agentFetch("/v1/secret/reveal", {
         method: "POST",
-        body: JSON.stringify({ kind: msg.kind || "qq", email: msg.email })
+        body: JSON.stringify({ kind: "qq", email: msg.email })
       });
       sendResponse({ ok: true, value: json.value });
       return;
