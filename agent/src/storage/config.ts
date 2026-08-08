@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { LOCAL_USER_ID } from "../http/auth.js";
-import { db } from "./db.js";
+import { dbGet, dbRun } from "./db.js";
 
 const AccountSchema = z.object({
   email: z.string().email(),
@@ -91,25 +91,10 @@ function migrateLegacy(raw: any): boolean {
 // Per-user config is stored as a JSON document in the `configs` table, keyed by
 // userId ("local" for the single-tenant instance).
 export async function loadConfig(userId: string = LOCAL_USER_ID): Promise<AppConfig> {
-  const row = db.prepare("SELECT json FROM configs WHERE user_id = ?").get(userId) as
-    | { json: string }
-    | undefined;
+  const row = await dbGet<{ json: string | object }>("SELECT json FROM configs WHERE user_id = ?", [userId]);
   if (!row) return ConfigSchema.parse({});
-  try {
-    const raw = JSON.parse(row.json);
-    const migrated = migrateLegacy(raw);
-    const cfg = ConfigSchema.parse(raw);
-    // Persist the upgraded shape once so legacy fields don't linger.
-    if (migrated) await saveConfig(cfg, userId);
-    return cfg;
-  } catch {
-    return ConfigSchema.parse({});
-  }
+  try { const raw = typeof row.json === "string" ? JSON.parse(row.json) : row.json; const migrated=migrateLegacy(raw); const cfg=ConfigSchema.parse(raw); if(migrated) await saveConfig(cfg,userId); return cfg; } catch { return ConfigSchema.parse({}); }
 }
-
 export async function saveConfig(cfg: AppConfig, userId: string = LOCAL_USER_ID): Promise<void> {
-  const json = JSON.stringify(cfg);
-  db.prepare(
-    "INSERT INTO configs (user_id, json) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET json = excluded.json"
-  ).run(userId, json);
+  await dbRun("INSERT INTO configs (user_id,json) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET json = excluded.json", [userId, JSON.stringify(cfg)]);
 }

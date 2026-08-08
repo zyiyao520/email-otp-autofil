@@ -1,76 +1,11 @@
-import { db } from "./db.js";
-
-/*
- * Key/value app settings stored in the `settings` table. Currently holds the
- * "require invite code to register" toggle, switchable live from the admin page.
- */
-
-export function getSetting(key: string, fallback: string): string {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as
-    | { value: string }
-    | undefined;
-  return row ? row.value : fallback;
-}
-
-export function setSetting(key: string, value: string): void {
-  db.prepare(
-    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-  ).run(key, value);
-}
-
-const REQUIRE_INVITE_KEY = "require_invite";
-
-// Default false: a fresh instance must allow registration so the first user
-// (and the admin) can get in before any invite codes exist.
-export function isInviteRequired(): boolean {
-  return getSetting(REQUIRE_INVITE_KEY, "0") === "1";
-}
-
-export function setInviteRequired(on: boolean): void {
-  setSetting(REQUIRE_INVITE_KEY, on ? "1" : "0");
-}
-
-const OUTLOOK_CLIENT_ID_KEY = "outlook_client_id";
-
-// Instance-wide Microsoft App (client) ID for Outlook OAuth. The admin registers
-// one app and sets it here; every user's OAuth sign-in shares it. Empty = unset.
-export function getOutlookClientId(): string {
-  return getSetting(OUTLOOK_CLIENT_ID_KEY, "").trim();
-}
-
-export function setOutlookClientId(clientId: string): void {
-  setSetting(OUTLOOK_CLIENT_ID_KEY, clientId.trim());
-}
-
-const GOOGLE_CLIENT_ID_KEY = "google_client_id";
-const GOOGLE_CLIENT_SECRET_KEY = "google_client_secret";
-
-// Instance-wide Google OAuth client ID and secret. Unlike Microsoft's public
-// client flow, Google's device code flow requires both a client ID and secret.
-export function getGoogleClientId(): string {
-  return getSetting(GOOGLE_CLIENT_ID_KEY, "").trim();
-}
-
-export function setGoogleClientId(clientId: string): void {
-  setSetting(GOOGLE_CLIENT_ID_KEY, clientId.trim());
-}
-
-export function getGoogleClientSecret(): string {
-  return getSetting(GOOGLE_CLIENT_SECRET_KEY, "").trim();
-}
-
-export function setGoogleClientSecret(clientSecret: string): void {
-  setSetting(GOOGLE_CLIENT_SECRET_KEY, clientSecret.trim());
-}
-
-const PUBSUB_AUDIENCE_KEY = "pubsub_audience";
-
-// Expected audience claim for Google Pub/Sub Push OIDC tokens.
-// Typically your agent's public URL, e.g. "https://your-agent.example.com/v1/gmail/pubsub"
-export function getPubSubAudience(): string {
-  return getSetting(PUBSUB_AUDIENCE_KEY, "").trim();
-}
-
-export function setPubSubAudience(audience: string): void {
-  setSetting(PUBSUB_AUDIENCE_KEY, audience.trim());
-}
+import { dbQuery, dbRun } from "./db.js";
+const cache=new Map<string,string>();
+export async function loadSettings(){for(const r of await dbQuery<{key:string;value:string}>("SELECT key,value FROM settings"))cache.set(r.key,r.value);}
+export function getSetting(key:string,fallback:string){return cache.get(key)??fallback;}
+export async function setSetting(key:string,value:string){cache.set(key,value);await dbRun("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",[key,value]);}
+const RI="require_invite", O="outlook_client_id", G="google_client_id", GS="google_client_secret", P="pubsub_audience";
+export function isInviteRequired(){return getSetting(RI,"0")==="1";} export async function setInviteRequired(v:boolean){await setSetting(RI,v?"1":"0");}
+export function getOutlookClientId(){return getSetting(O,"").trim();} export async function setOutlookClientId(v:string){await setSetting(O,v.trim());}
+export function getGoogleClientId(){return getSetting(G,"").trim();} export async function setGoogleClientId(v:string){await setSetting(G,v.trim());}
+export function getGoogleClientSecret(){return getSetting(GS,"").trim();} export async function setGoogleClientSecret(v:string){await setSetting(GS,v.trim());}
+export function getPubSubAudience(){return getSetting(P,"").trim();} export async function setPubSubAudience(v:string){await setSetting(P,v.trim());}

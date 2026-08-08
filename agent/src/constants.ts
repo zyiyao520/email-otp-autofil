@@ -2,7 +2,7 @@ export const APP_ID = "email-otp-autofill";
 
 export const AGENT_HOST = process.env.OTP_AGENT_HOST?.trim() || "127.0.0.1";
 export const AGENT_PORT = (() => {
-  const raw = process.env.OTP_AGENT_PORT?.trim();
+  const raw = process.env.PORT?.trim() || process.env.OTP_AGENT_PORT?.trim();
   if (!raw) return 17373;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0 || n >= 65536) return 17373;

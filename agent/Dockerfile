@@ -23,5 +23,7 @@ COPY --from=builder /app/dist ./dist
 COPY admin ./admin
 
 EXPOSE 17373
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -q -O- http://127.0.0.1:${PORT:-17373}/health >/dev/null || exit 1
 CMD ["node", "dist/index.js"]
 

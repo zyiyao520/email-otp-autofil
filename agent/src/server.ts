@@ -19,7 +19,7 @@ import { consumeOAuthState, createOAuthState } from "./http/oauth-state.js";
 import { OtpStore } from "./otp/store.js";
 import { ProviderManager, ProviderRegistry } from "./providers/manager.js";
 import { verifyImap } from "./providers/imap.js";
-import { db, migrateJsonToDb } from "./storage/db.js";
+import { databaseHealth, dbGet, initializeDatabase } from "./storage/db.js";
 import { migratePlaintextSecrets, secretGet, secretSet } from "./storage/secrets.js";
 import {
   createUser,
@@ -28,6 +28,7 @@ import {
   listUserIds,
   listUsers,
   setUserDisabled,
+  deleteUser,
   verifyPassword,
 } from "./storage/users.js";
 import { loadConfig } from "./storage/config.js";
@@ -41,6 +42,7 @@ import {
 } from "./storage/invites.js";
 import {
   isInviteRequired,
+  loadSettings,
   setInviteRequired,
   getOutlookClientId,
   setOutlookClientId,
@@ -74,8 +76,8 @@ export async function startServer() {
         "in PLAINTEXT. Set OTP_AGENT_MASTER_KEY."
     );
   }
-  // Import any legacy JSON files into SQLite (one-time, before reading the DB).
-  migrateJsonToDb();
+  await initializeDatabase();
+  await loadSettings();
   await migratePlaintextSecrets();
 
   const app = express();
@@ -116,7 +118,7 @@ export async function startServer() {
     // Pre-check the invite when required; the actual claim happens after the
     // user row is created (atomic consumeInvite guards against double-use).
     if (isInviteRequired()) {
-      if (!code || !isInviteUsable(code)) {
+      if (!code || !(await isInviteUsable(code))) {
         return res.status(400).json({ ok: false, error: "invalid_invite" });
       }
     }
@@ -125,13 +127,13 @@ export async function startServer() {
       const user = await createUser(body.data.username, body.data.password, code || undefined);
       if (isInviteRequired()) {
         // Claim atomically; if someone raced us to the code, roll back.
-        if (!consumeInvite(code, user.id)) {
-          db.prepare("DELETE FROM users WHERE id = ?").run(user.id);
+        if (!(await consumeInvite(code, user.id))) {
+          await deleteUser(user.id);
           return res.status(400).json({ ok: false, error: "invalid_invite" });
         }
       }
       await registry.getOrCreate(user.id); // empty config, ready for accounts
-      const token = createSession(user.id);
+      const token = await createSession(user.id);
       res.json({ ok: true, token, user: { id: user.id, username: user.username } });
     } catch (e) {
       const msg = String((e as any)?.message || e);
@@ -149,14 +151,14 @@ export async function startServer() {
     if (user.disabled) {
       return res.status(401).json({ ok: false, error: "account_disabled" });
     }
-    const token = createSession(user.id);
+    const token = await createSession(user.id);
     res.json({ ok: true, token, user: { id: user.id, username: user.username } });
   });
 
-  app.post("/v1/auth/logout", requireAuth, (req, res) => {
+  app.post("/v1/auth/logout", requireAuth, async (req, res) => {
     const h = String(req.headers.authorization || "");
     const m = /^Bearer\s+(.+)$/i.exec(h);
-    if (m) destroySession(m[1]!.trim());
+    if (m) await destroySession(m[1]!.trim());
     res.json({ ok: true });
   });
 
@@ -172,10 +174,15 @@ export async function startServer() {
   app.use((req, res, next) => {
     const p = req.path;
     if (!p.startsWith("/v1/")) return next();
-    if (p === "/v1/status" || p.startsWith("/v1/auth/") || p.startsWith("/v1/admin/")) return next();
+    if (p === "/health" || p === "/v1/status" || p.startsWith("/v1/auth/") || p.startsWith("/v1/admin/")) return next();
     if (p === "/v1/gmail/pubsub" && req.method === "POST") return next();
     if (p === "/v1/gmail/auth/callback") return next(); // OAuth redirect from Google (identity via state)
     return requireAuth(req, res, next);
+  });
+
+  app.get("/health", async (_req, res) => {
+    const database = await databaseHealth();
+    res.status(database ? 200 : 503).json({ ok: database, database });
   });
 
   // ---- status ------------------------------------------------------------
@@ -183,7 +190,7 @@ export async function startServer() {
     // Reachable without auth; reports per-user data only with a valid session.
     const h = String(req.headers.authorization || "");
     const m = /^Bearer\s+(.+)$/i.exec(h);
-    const userId = m ? resolveSession(m[1]!.trim()) : null;
+    const userId = m ? await resolveSession(m[1]!.trim()) : null;
     if (!userId) {
       return res.json({
         ok: true,
@@ -630,18 +637,21 @@ export async function startServer() {
   });
 
   // ---- admin API (token-gated via requireAdmin) --------------------------
-  app.get("/v1/admin/stats", requireAdmin, (_req, res) => {
+  app.get("/v1/admin/stats", requireAdmin, async (_req, res) => {
     const now = Date.now();
     const dayStart = now - (now % 86_400_000); // approx local-naive day bucket (UTC)
     const week = now - 7 * 86_400_000;
-    const totalUsers = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }).n;
-    const todayNew = (db.prepare("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?").get(dayStart) as { n: number }).n;
-    const activ7 = (db.prepare("SELECT COUNT(*) AS n FROM users WHERE last_seen >= ?").get(week) as { n: number }).n;
-    const disabled = (db.prepare("SELECT COUNT(*) AS n FROM users WHERE disabled = 1").get() as { n: number }).n;
+    const [totalRow, todayRow, activeRow, disabledRow] = await Promise.all([
+      dbGet<{ n: number | string }>("SELECT COUNT(*) AS n FROM users"),
+      dbGet<{ n: number | string }>("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?", [dayStart]),
+      dbGet<{ n: number | string }>("SELECT COUNT(*) AS n FROM users WHERE last_seen >= ?", [week]),
+      dbGet<{ n: number | string }>("SELECT COUNT(*) AS n FROM users WHERE disabled = ?", [true]),
+    ]);
+    const totalUsers = Number(totalRow?.n || 0), todayNew = Number(todayRow?.n || 0), activ7 = Number(activeRow?.n || 0), disabled = Number(disabledRow?.n || 0);
     res.json({
       ok: true,
       users: { total: totalUsers, todayNew, active7d: activ7, disabled },
-      invites: inviteStats(),
+      invites: await inviteStats(),
       requireInvite: isInviteRequired(),
       outlookClientId: getOutlookClientId(),
       googleClientId: getGoogleClientId(),
@@ -652,35 +662,31 @@ export async function startServer() {
     });
   });
 
-  app.get("/v1/admin/invites", requireAdmin, (_req, res) => {
+  app.get("/v1/admin/invites", requireAdmin, async (_req, res) => {
     // Attach the consumer's username for display.
-    const items = listInvites().map((iv) => {
-      let usedByName: string | null = null;
-      if (iv.usedBy) {
-        const u = db.prepare("SELECT username FROM users WHERE id = ?").get(iv.usedBy) as { username: string } | undefined;
-        usedByName = u ? u.username : iv.usedBy;
-      }
-      return { ...iv, usedByName };
-    });
+    const items = await Promise.all((await listInvites()).map(async (iv) => {
+      const u = iv.usedBy ? await getUser(iv.usedBy) : null;
+      return { ...iv, usedByName: u?.username ?? iv.usedBy ?? null };
+    }));
     res.json({ ok: true, items });
   });
 
-  app.post("/v1/admin/invites", requireAdmin, (req, res) => {
+  app.post("/v1/admin/invites", requireAdmin, async (req, res) => {
     const Body = z.object({ count: z.number().int().min(1).max(100).default(1), note: z.string().max(200).optional() });
     const body = Body.safeParse(req.body);
     if (!body.success) return res.status(400).json({ ok: false, error: "bad_request" });
-    const made = createInvites(body.data.count, body.data.note);
+    const made = await createInvites(body.data.count, body.data.note);
     res.json({ ok: true, codes: made.map((m) => m.code) });
   });
 
-  app.post("/v1/admin/invites/revoke", requireAdmin, (req, res) => {
+  app.post("/v1/admin/invites/revoke", requireAdmin, async (req, res) => {
     const Body = z.object({ code: z.string().min(1) });
     const body = Body.safeParse(req.body);
     if (!body.success) return res.status(400).json({ ok: false, error: "bad_request" });
-    res.json({ ok: revokeInvite(body.data.code.toUpperCase()) });
+    res.json({ ok: await revokeInvite(body.data.code.toUpperCase()) });
   });
 
-  app.post("/v1/admin/settings", requireAdmin, (req, res) => {
+  app.post("/v1/admin/settings", requireAdmin, async (req, res) => {
     const Body = z.object({
       requireInvite: z.boolean().optional(),
       // Microsoft App (client) ID for Outlook OAuth. Empty string clears it.
@@ -693,11 +699,11 @@ export async function startServer() {
     });
     const body = Body.safeParse(req.body);
     if (!body.success) return res.status(400).json({ ok: false, error: "bad_request" });
-    if (body.data.requireInvite !== undefined) setInviteRequired(body.data.requireInvite);
-    if (body.data.outlookClientId !== undefined) setOutlookClientId(body.data.outlookClientId);
-    if (body.data.googleClientId !== undefined) setGoogleClientId(body.data.googleClientId);
-    if (body.data.googleClientSecret !== undefined) setGoogleClientSecret(body.data.googleClientSecret);
-    if (body.data.pubsubAudience !== undefined) setPubSubAudience(body.data.pubsubAudience);
+    if (body.data.requireInvite !== undefined) await setInviteRequired(body.data.requireInvite);
+    if (body.data.outlookClientId !== undefined) await setOutlookClientId(body.data.outlookClientId);
+    if (body.data.googleClientId !== undefined) await setGoogleClientId(body.data.googleClientId);
+    if (body.data.googleClientSecret !== undefined) await setGoogleClientSecret(body.data.googleClientSecret);
+    if (body.data.pubsubAudience !== undefined) await setPubSubAudience(body.data.pubsubAudience);
     res.json({
       ok: true,
       requireInvite: isInviteRequired(),
@@ -746,10 +752,10 @@ export async function startServer() {
     const target = await getUser(body.data.userId);
     if (!target) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-    setUserDisabled(body.data.userId, body.data.disabled);
+    await setUserDisabled(body.data.userId, body.data.disabled);
     if (body.data.disabled) {
       // Kick the user offline and stop their mailbox polling (data is kept).
-      destroyUserSessions(body.data.userId);
+      await destroyUserSessions(body.data.userId);
       await registry.removeUser(body.data.userId);
     } else {
       // Re-enable: rebuild their providers/watchers.

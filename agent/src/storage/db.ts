@@ -1,145 +1,111 @@
-import { mkdirSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Pool } from "pg";
 
 import { DATA_DIR } from "../constants.js";
 
-/*
- * SQLite-backed persistence for the agent (users, secrets, per-user config).
- * Uses Node's built-in node:sqlite (no native build step), so it works in a
- * plain node:24-alpine container. The OTP store stays in-memory by design —
- * codes are transient and expire within minutes.
- *
- * One database file lives in the data volume: ${DATA_DIR}/agent.db
- */
+export const DATABASE_URL = process.env.DATABASE_URL?.trim() || "";
+export const DB_BACKEND = DATABASE_URL ? "postgres" : "sqlite";
 
-const DB_PATH = path.join(DATA_DIR, "agent.db");
+let sqlite: DatabaseSync | null = null;
+let pool: Pool | null = null;
 
-mkdirSync(DATA_DIR, { recursive: true });
-
-export const db = new DatabaseSync(DB_PATH);
-
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  CREATE TABLE IF NOT EXISTS users (
-    id            TEXT PRIMARY KEY,
-    username      TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at    INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS secrets (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS configs (
-    user_id TEXT PRIMARY KEY,
-    json    TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS invites (
-    code       TEXT PRIMARY KEY,
-    created_at INTEGER NOT NULL,
-    used_by    TEXT,            -- userId; NULL = unused
-    used_at    INTEGER,
-    note       TEXT
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    token      TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-`);
-
-// Additive column migrations for existing DBs. ALTER fails if the column
-// already exists — swallow that case so it's a no-op on subsequent startups.
-function addColumnIfMissing(table: string, columnDef: string): void {
-  try {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
-  } catch {
-    // column already exists — ignore
-  }
-}
-addColumnIfMissing("users", "invite_code TEXT"); // invite used at registration
-addColumnIfMissing("users", "last_seen INTEGER"); // activity tracking
-addColumnIfMissing("users", "disabled INTEGER DEFAULT 0"); // soft-delete / deactivation
-
-// One-time import of legacy JSON files into the DB. Runs only when the relevant
-// table is still empty, so it's safe to call on every startup. Preserves the
-// existing self-hosted deployment's data when upgrading to the DB backend.
-export function migrateJsonToDb(): void {
-  try {
-    importUsers();
-    importSecrets();
-    importConfigs();
-  } catch (e) {
-    console.error("[otp-agent] JSON→DB migration error:", String((e as any)?.message || e));
-  }
+function pgSql(sql: string): string {
+  let i = 0;
+  return sql.replace(/\?/g, () => `$${++i}`);
 }
 
-function tableEmpty(table: string): boolean {
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
-  return row.n === 0;
+export async function dbQuery<T extends Record<string, unknown> = Record<string, unknown>>(
+  sql: string,
+  params: any[] = [],
+): Promise<T[]> {
+  if (pool) return (await pool.query(pgSql(sql), params)).rows as T[];
+  if (!sqlite) throw new Error("database_not_initialized");
+  return sqlite.prepare(sql).all(...params.map((v) => typeof v === "boolean" ? (v ? 1 : 0) : v)) as T[];
 }
 
-function importUsers(): void {
-  const file = path.join(DATA_DIR, "users.json");
-  if (!existsSync(file) || !tableEmpty("users")) return;
-  const parsed = JSON.parse(readFileSync(file, "utf8"));
-  const users = Array.isArray(parsed?.users) ? parsed.users : [];
-  const ins = db.prepare(
-    "INSERT OR IGNORE INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)"
-  );
-  for (const u of users) {
-    if (u?.id && u?.username) ins.run(u.id, u.username, u.passwordHash ?? "", Number(u.createdAt) || 0);
-  }
-  if (users.length) console.log(`[otp-agent] migrated ${users.length} user(s) from users.json → DB`);
+export async function dbGet<T extends Record<string, unknown> = Record<string, unknown>>(
+  sql: string,
+  params: any[] = [],
+): Promise<T | null> {
+  if (pool) return ((await pool.query(pgSql(sql), params)).rows[0] as T | undefined) ?? null;
+  if (!sqlite) throw new Error("database_not_initialized");
+  return (sqlite.prepare(sql).get(...params.map((v) => typeof v === "boolean" ? (v ? 1 : 0) : v)) as T | undefined) ?? null;
 }
 
-function importSecrets(): void {
-  const file = path.join(DATA_DIR, "secrets.json");
-  if (!existsSync(file) || !tableEmpty("secrets")) return;
-  const parsed = JSON.parse(readFileSync(file, "utf8"));
-  const secrets = parsed?.secrets && typeof parsed.secrets === "object" ? parsed.secrets : {};
-  const ins = db.prepare("INSERT OR IGNORE INTO secrets (key, value) VALUES (?, ?)");
-  let n = 0;
-  for (const [k, v] of Object.entries(secrets)) {
-    if (typeof v === "string") {
-      ins.run(k, v);
-      n++;
-    }
-  }
-  if (n) console.log(`[otp-agent] migrated ${n} secret(s) from secrets.json → DB`);
+export async function dbRun(sql: string, params: any[] = []): Promise<number> {
+  if (pool) return (await pool.query(pgSql(sql), params)).rowCount ?? 0;
+  if (!sqlite) throw new Error("database_not_initialized");
+  return Number(sqlite.prepare(sql).run(...params.map((v) => typeof v === "boolean" ? (v ? 1 : 0) : v)).changes);
 }
 
-function importConfigs(): void {
-  if (!tableEmpty("configs")) return;
-  const ins = db.prepare("INSERT OR IGNORE INTO configs (user_id, json) VALUES (?, ?)");
-  let n = 0;
-  // Legacy single-tenant file → "local" user.
-  const localFile = path.join(DATA_DIR, "config.json");
-  if (existsSync(localFile)) {
-    ins.run("local", readFileSync(localFile, "utf8"));
-    n++;
+export async function initializeDatabase(): Promise<void> {
+  if (DATABASE_URL) {
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      max: Math.max(1, Number(process.env.DB_POOL_MAX || 3)),
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 15_000,
+    });
+    await pool.query("SELECT 1");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+        created_at BIGINT NOT NULL, invite_code TEXT, last_seen BIGINT, disabled BOOLEAN NOT NULL DEFAULT FALSE
+      );
+      CREATE TABLE IF NOT EXISTS secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS configs (user_id TEXT PRIMARY KEY, json JSONB NOT NULL);
+      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS invites (
+        code TEXT PRIMARY KEY, created_at BIGINT NOT NULL, used_by TEXT, used_at BIGINT, note TEXT
+      );
+      CREATE TABLE IF NOT EXISTS sessions (
+        token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+    `);
+    console.log("[otp-agent] database backend: PostgreSQL");
+    return;
   }
-  // Per-user files config-<userId>.json
-  for (const name of safeReaddir(DATA_DIR)) {
-    const m = /^config-(.+)\.json$/.exec(name);
-    if (m) {
-      ins.run(m[1]!, readFileSync(path.join(DATA_DIR, name), "utf8"));
-      n++;
-    }
+
+  mkdirSync(DATA_DIR, { recursive: true });
+  sqlite = new DatabaseSync(path.join(DATA_DIR, "agent.db"));
+  sqlite.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL, invite_code TEXT, last_seen INTEGER, disabled INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS configs (user_id TEXT PRIMARY KEY, json TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, used_by TEXT, used_at INTEGER, note TEXT);
+    CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+  `);
+  const sessionColumns = sqlite.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+  if (!sessionColumns.some((column) => column.name === "token_hash")) {
+    sqlite.exec(`
+      DROP TABLE IF EXISTS sessions;
+      CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE INDEX idx_sessions_user ON sessions(user_id);
+      CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+    `);
+    console.warn("[otp-agent] legacy sessions invalidated during secure token-hash migration");
   }
-  if (n) console.log(`[otp-agent] migrated ${n} config file(s) → DB`);
+  console.log("[otp-agent] database backend: SQLite");
 }
 
-function safeReaddir(dir: string): string[] {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
-  }
+export async function databaseHealth(): Promise<boolean> {
+  try { await dbGet("SELECT 1 AS ok"); return true; } catch { return false; }
+}
+
+export async function closeDatabase(): Promise<void> {
+  if (pool) await pool.end();
+  pool = null;
+  sqlite?.close();
+  sqlite = null;
 }
