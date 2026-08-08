@@ -94,8 +94,9 @@ Chrome → `chrome://extensions` → 开启开发者模式 → **加载已解压
 > 新邮箱。
 
 - **QQ 邮箱（IMAP）**：登录 [QQ 邮箱网页版](https://mail.qq.com) → 设置 → 账号 → 开启「IMAP/SMTP 服务」→ 按提示短信验证 → 得到 **授权码**（不是登录密码）。把 QQ 邮箱和授权码填入设置页 → `保存 QQ`。
-- **Outlook（OAuth，推荐）**：在 [Azure 门户 · 应用注册](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) 新建注册（账户类型选「Personal Microsoft accounts only」）→ Authentication → Add a platform → Mobile and desktop applications → 选择或填写 `https://login.microsoftonline.com/common/oauth2/nativeclient` → 将「Allow public client flows」设为 Yes → 复制 Application (client) ID 填入 → `保存 Client ID` → `开始登录`，按设备码提示在浏览器完成授权 → `轮询` 确认连接。
-- **Gmail（OAuth）**：在 [Google Cloud Console · Credentials](https://console.cloud.google.com/apis/credentials) 创建 OAuth 2.0 客户端 ID（类型选「Web 应用」）→ 记下 Client ID 和 Client Secret → 填入扩展的 Gmail 设置 → `开始登录`，在浏览器完成授权 → 连接自动建立。
+- **其他邮箱（通用 IMAP）**：选择「其他邮箱（IMAP）」，填写邮箱地址、IMAP 服务器、端口、SSL/TLS、登录用户名和客户端授权码。163、126、yeah.net 会自动推荐 `imap.163.com`、`imap.126.com`、`imap.yeah.net`；默认端口为 `993` 并启用 SSL/TLS。请使用邮箱后台生成的客户端授权码或应用专用密码，不要填写网页登录密码。
+- **Outlook（OAuth）**：实例管理员先在 `/admin` 配置共用的 Microsoft Application (client) ID。用户在扩展中选择 Outlook，点击「开始登录」，按设备码提示完成授权即可。
+- **Gmail（OAuth）**：实例管理员先在 `/admin` 配置共用的 Google Client ID、Client Secret 以及正确的回调地址。用户在扩展中选择 Gmail，点击「开始登录」并完成授权即可。
 
   **可选：Pub/Sub 推送（生产环境推荐）**——实现零轮询实时获取验证码：
   1. 在 [Google Cloud Console · Pub/Sub](https://console.cloud.google.com/cloudpubsub)
@@ -106,7 +107,7 @@ Chrome → `chrome://extensions` → 开启开发者模式 → **加载已解压
      Gmail 设置中配置主题名称。
   4. agent 会自动注册 Gmail watch（7 天有效期，自动续期）并处理收到的推送通知。
 
-> 已保存的授权码/密码下次打开设置页会以圆点（••••）回填，点字段右侧的**小眼睛**即可查看明文。
+> QQ 授权码可在编辑页面回显。通用 IMAP 密码不会回显；编辑通用 IMAP 配置时需重新填写客户端授权码或应用专用密码。
 
 ### 2. 日常使用
 

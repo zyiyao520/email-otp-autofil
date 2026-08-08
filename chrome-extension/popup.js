@@ -16,14 +16,16 @@ const SELECTED_OTP_KEY = "selectedOtpId";
 
 // Human-facing provider label + icon for the source tag.
 const PROVIDER_META = {
-  qq: { name: "QQ 邮箱", icon: "📩" },
-  outlook: { name: "Outlook", icon: "📨" },
-  gmail: { name: "Gmail", icon: "📧" }
+  qq: { nameKey: "provider_qq", icon: "📩" },
+  imap: { nameKey: "provider_imap", icon: "✉️" },
+  outlook: { nameKey: "provider_outlook", icon: "📨" },
+  gmail: { nameKey: "provider_gmail", icon: "📧" }
 };
 
 function providerMeta(provider) {
   const key = String(provider || "").toLowerCase();
-  return PROVIDER_META[key] || { name: provider ? String(provider) : "", icon: "✉️" };
+  const meta = PROVIDER_META[key];
+  return meta ? { name: t(LANG, meta.nameKey), icon: meta.icon } : { name: provider ? String(provider) : "", icon: "✉️" };
 }
 
 function $(id) {

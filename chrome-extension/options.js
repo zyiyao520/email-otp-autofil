@@ -391,6 +391,10 @@ async function saveConnection() {
   const agentBaseUrl = $("loginBaseUrl").value.trim() || DEFAULT_BASE_URL;
 
   const origin = originPatternFromBaseUrl(agentBaseUrl);
+  if (!origin) {
+    setMsg("loginConnMsg", T("invalid_base_url"));
+    return;
+  }
   let permGranted = true;
   if (origin && !PRE_GRANTED_ORIGINS.has(origin)) {
     try {
