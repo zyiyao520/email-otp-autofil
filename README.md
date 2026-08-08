@@ -2,17 +2,20 @@
 
 **English** | [中文](README.zh-CN.md)
 
-Fetch email one-time passcodes (OTP) from QQ Mail / Outlook / Gmail and autofill them
-into the current page with a hotkey — via a local/self-hosted **agent** plus a
-Chrome (MV3) **extension**.
+Read one-time passwords (OTPs) and verification links from QQ Mail, Outlook,
+Gmail, and generic IMAP mailboxes. A local or remotely deployed **agent** works
+with a Chrome Manifest V3 **extension** to provide context-aware autofill,
+verification-link prompts, and registration-email selection.
 
-> wip: self-hosted, ...
+> Storage supports local SQLite or PostgreSQL/Neon through one complete `DATABASE_URL=postgresql://...` value.
 
 ## How it works
 
-The Chrome extension polls an **agent** service. The agent connects to your
-mailbox over IMAP / OAuth, extracts the latest verification code, and the
-extension fills it into the focused input when you press the hotkey.
+The Chrome extension connects to an **agent** service. The agent reads recent
+mail through IMAP, Microsoft Graph OAuth, or Gmail OAuth and extracts OTPs and
+high-confidence HTTPS verification links. The extension recognizes OTP fields,
+check-email pages, and registration email fields, then fills or prompts according
+to the current page context.
 
 For Gmail, the agent supports **Google Cloud Pub/Sub push notifications** —
 when a new email arrives, Google pushes a notification to the agent in
@@ -31,16 +34,16 @@ Two ways to connect:
 
 ## Components
 
-- `agent/`: Node/TypeScript HTTP service (default `127.0.0.1:17373`) that
-  connects to mailboxes, extracts OTP codes, encrypts stored credentials, and
-  persists state in SQLite.
-- `chrome-extension/`: Chrome MV3 extension (hotkey fill, popup, settings/
-  onboarding UI, account login, EN/中文 bilingual).
+- `agent/`: Node.js 24 / TypeScript HTTP service that connects to mailboxes,
+  extracts OTPs and verification links, encrypts credentials, and persists state
+  in PostgreSQL/Neon or local SQLite. It supports a platform-provided `PORT`.
+- `chrome-extension/`: Chrome MV3 extension with automatic OTP filling,
+  verification-link prompts, registration-email selection, popup/settings UI,
+  account login, and English/Chinese localization.
 
 ## Features
 
-- **Mailboxes**: QQ Mail (IMAP auth code), Outlook (OAuth device-code flow), and
-  Gmail (OAuth authorization-code flow). Multiple accounts run in parallel.
+- **Mailboxes**: QQ Mail, Outlook OAuth, Gmail OAuth, and generic IMAP with an app password.
 - **Gmail Pub/Sub push**: real-time OTP delivery via Google Cloud Pub/Sub —
   zero polling delay, lower API quota usage. Falls back to polling if Pub/Sub
   is not configured.
@@ -51,18 +54,18 @@ Two ways to connect:
 - **Credential encryption**: AES-256-GCM (key derived from a master key via
   scrypt); the master key lives only in the environment and is never written to
   disk.
-- **Multi-tenant**: users register and log in; all mailboxes, OTPs and secrets
-  are isolated per account (30-day sessions persisted in SQLite).
+- **Multi-tenant**: mailboxes, OTPs, and credentials are isolated per account.
+  Sessions last 30 days and only SHA-256 session-token hashes are persisted.
 - **Admin panel**: `/admin` (token-gated) — user/mailbox stats, invite-code
   management, optional "invite required" registration, enable/disable users.
 - **Bilingual UI**: 中 / English, switchable at runtime.
 
 ## Status
 
-Beyond MVP: QQ IMAP, Outlook OAuth (Graph device-code), and Gmail OAuth are
-working; multi-tenant with SQLite-backed persistence and at-rest credential
-encryption; one-command Docker deploy. Gmail supports **Pub/Sub push
-notifications** for real-time OTP delivery.
+The current release supports QQ and generic IMAP, Outlook OAuth, Gmail OAuth and
+Pub/Sub, automatic OTP filling, verification-link prompts, registration mailbox
+selection, encrypted credentials, and PostgreSQL/Neon or SQLite persistence.
+The agent supports Docker deployment to a VPS or a container platform such as Shiper.
 
 ## Load the extension
 
@@ -155,8 +158,8 @@ follows your browser language on first run, then remembers your choice.
 ## Self-host the agent (Docker)
 
 ```bash
-git clone https://github.com/priority3/email-otp-autofill.git
-cd email-otp-autofill
+git clone https://github.com/zyiyao520/email-otp-autofil.git
+cd email-otp-autofil
 cp .env.example .env
 ```
 
@@ -202,17 +205,38 @@ Then set the extension's **Agent Base URL** to your public address.
 > previously stored secrets can no longer be decrypted. It is never written to
 > disk.
 
-## Secrets storage
+## Database and secret storage
 
-Email credentials (QQ auth code / Outlook OAuth tokens / Gmail OAuth tokens) are stored encrypted in
-the SQLite DB under the `data/` volume using **AES-256-GCM**,
-with the key derived (scrypt) from `OTP_AGENT_MASTER_KEY`. The master key is
-only read from the environment and is never written to disk — a leaked database
-is useless without it.
+Set one complete `DATABASE_URL=postgresql://...` value to use PostgreSQL/Neon.
+When it is absent, the agent uses local SQLite at `data/agent.db`.
 
-Without a master key the agent falls back to **plaintext** and prints a startup
-warning (only acceptable for throwaway local testing). Existing plaintext
-secrets are automatically re-encrypted on the next startup once a key is set.
+Mailbox credentials are encrypted with **AES-256-GCM** before storage. The key
+is derived from `OTP_AGENT_MASTER_KEY` with scrypt and is never written to the
+database. Raw session Bearer tokens are also never stored; only SHA-256 hashes
+are persisted.
+
+Keep `OTP_AGENT_MASTER_KEY` stable. Losing or changing it makes existing mailbox
+credentials unrecoverable. Running without it is intended only for disposable
+local testing.
+
+## Shiper + Neon deployment
+
+For production on Shiper, configure the project with `agent` as the base path and `Dockerfile` as the deployment file. Set a pooled PostgreSQL URL directly:
+
+```env
+DATABASE_URL=postgresql://USER:PASSWORD@HOST-pooler.neon.tech/neondb?sslmode=require
+OTP_AGENT_MASTER_KEY=<stable random master key>
+```
+
+Optional settings:
+
+```env
+OTP_ADMIN_TOKEN=<independent admin token>
+NODE_OPTIONS=--max-old-space-size=128
+DB_POOL_MAX=3
+```
+
+The agent automatically uses Shiper's `PORT`, initializes the PostgreSQL schema, and exposes `/health`. See [`docs/deploy-shiper-neon.md`](docs/deploy-shiper-neon.md).
 
 ## Admin API (multi-tenant)
 

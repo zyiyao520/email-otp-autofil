@@ -1,7 +1,7 @@
 {
   "name": "otp-agent",
   "version": "0.1.0",
-  "description": "Local email OTP fetcher for Chrome autofill (Outlook + QQ).",
+  "description": "Email OTP and verification-link agent for QQ, Outlook, Gmail, and generic IMAP.",
   "private": true,
   "type": "module",
   "scripts": {

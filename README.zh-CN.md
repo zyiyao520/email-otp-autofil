@@ -2,15 +2,17 @@
 
 [English](README.md) | **中文**
 
-从 QQ 邮箱 / Outlook / Gmail 抓取邮箱一次性验证码（OTP），用快捷键自动填充到当前页面——
-通过一个本地 / 自部署的 **agent** 加一个 Chrome（MV3）**扩展** 实现。
+从 QQ 邮箱、Outlook、Gmail 及通用 IMAP 邮箱读取一次性验证码（OTP）和邮箱验证链接，
+通过一个本地或远端部署的 **Agent** 与 Chrome Manifest V3 **扩展**，完成验证码自动填充、
+验证链接主动提示和注册邮箱候选选择。
 
-> wip: self-hosted……
+> 当前版本支持本地 SQLite，也支持通过一条 `postgresql://...` 的 `DATABASE_URL` 使用 Neon 或其他 PostgreSQL 服务。
 
 ## 工作原理
 
-Chrome 扩展轮询一个 **agent** 服务。agent 通过 IMAP / OAuth 连接你的邮箱，提取最新
-验证码；当你按下快捷键时，扩展把它填进当前聚焦的输入框。
+Chrome 扩展连接一个 **Agent** 服务。Agent 通过 IMAP、Microsoft Graph OAuth 或 Gmail OAuth
+读取近期邮件，提取验证码和高置信度 HTTPS 验证链接。扩展会识别验证码输入框、检查邮箱页面
+及注册邮箱字段，并按场景自动填充或显示需要用户确认的提示。
 
 对于 Gmail，agent 支持 **Google Cloud Pub/Sub 推送通知**——当新邮件到达时，Google
 会实时推送到 agent，消除轮询延迟并减少 API 配额消耗。
@@ -27,8 +29,9 @@ Chrome 扩展轮询一个 **agent** 服务。agent 通过 IMAP / OAuth 连接你
 
 ## 组成部分
 
-- `agent/`：Node/TypeScript HTTP 服务（默认 `127.0.0.1:17373`），负责连接邮箱、提取
-  验证码、加密存储凭据，并用 SQLite 持久化状态。
+- `agent/`：Node.js 24 / TypeScript HTTP 服务，负责连接邮箱、提取验证码和验证链接、
+  加密存储凭据，并通过 PostgreSQL/Neon 或本地 SQLite 持久化状态。默认本地监听
+  `127.0.0.1:17373`，平台部署时支持读取 `PORT`。
 - `chrome-extension/`：Chrome MV3 扩展（快捷键填充、弹窗、设置 / 引导 UI、账号登录、
   中 / EN 双语）。
 
@@ -50,7 +53,7 @@ Chrome 扩展轮询一个 **agent** 服务。agent 通过 IMAP / OAuth 连接你
 
 ## 功能特性
 
-- **邮箱**：QQ 邮箱（IMAP 授权码）、Outlook（OAuth 设备码流程）与 Gmail（OAuth 授权码流程），多账号并行运行。
+- **邮箱**：QQ 邮箱、Outlook OAuth、Gmail OAuth，以及使用应用专用密码的通用 IMAP 邮箱。
 - **Gmail Pub/Sub 推送**：通过 Google Cloud Pub/Sub 实时获取验证码——零轮询延迟，更低 API 配额消耗。未配置 Pub/Sub 时自动回退到轮询模式。
 - **验证码提取**：关键词 + 打分匹配 4–8 位验证码（中 / 英文关键词），自动识别有效期
   窗口（10 秒–24 小时）。
@@ -58,16 +61,17 @@ Chrome 扩展轮询一个 **agent** 服务。agent 通过 IMAP / OAuth 连接你
   新验证码（约每 30 秒检查一次）。
 - **凭据加密**：AES-256-GCM（密钥由主密钥经 scrypt 派生）；主密钥仅存在于环境变量
   中，永不落盘。
-- **多租户**：用户注册并登录；每个账号的邮箱、验证码和密钥彼此隔离（30 天会话，
-  SQLite 持久化）。
+- **多租户**：用户注册并登录；每个账号的邮箱、验证码和凭据相互隔离。会话有效期为 30 天，
+  数据可持久化到 PostgreSQL/Neon 或本地 SQLite，数据库中只保存 Session Token 的 SHA-256 哈希。
 - **管理后台**：`/admin`（token 鉴权）——用户 / 邮箱统计、邀请码管理、可选「需邀请码
   注册」、启用 / 停用用户。
 - **双语 UI**：中 / English，运行时可切换。
 
 ## 当前状态
 
-已超出 MVP：QQ IMAP、Outlook OAuth（Graph 设备码）与 Gmail OAuth 均可用；多租户 + SQLite 持久化 +
-凭据静态加密；一条命令 Docker 部署。Gmail 支持 **Pub/Sub 推送通知**，实现实时验证码获取。
+当前版本已支持 QQ IMAP、通用 IMAP、Outlook OAuth、Gmail OAuth/Pub/Sub、验证码自动填充、
+验证链接主动提示、注册邮箱选择、多租户隔离、AES-256-GCM 凭据加密，以及 PostgreSQL/Neon
+和 SQLite 双存储后端。Agent 可通过 Docker 部署到 VPS 或 Shiper 等容器平台。
 
 ## 加载扩展
 
@@ -128,17 +132,16 @@ popup 和设置页右上角有**中 / English 切换**，首次跟随浏览器�
 ## 自部署 agent（Docker）
 
 ```bash
-git clone https://github.com/priority3/email-otp-autofill.git
-cd email-otp-autofill
+git clone https://github.com/zyiyao520/email-otp-autofil.git
+cd email-otp-autofil
 cp .env.example .env
 ```
 
-在 `.env` 里设置两个密钥（用户各自用自己的账号注册 / 登录，数据彼此隔离——没有需要
-分发的共享 API key）：
+复制配置模板，并至少设置稳定的凭据加密主密钥。管理后台不需要时，`OTP_ADMIN_TOKEN` 可以留空：
 
 ```bash
-OTP_AGENT_MASTER_KEY=$(openssl rand -base64 32)   # 静态加密密钥（必填）
-OTP_ADMIN_TOKEN=$(openssl rand -base64 24)        # /admin 管理后台用
+OTP_AGENT_MASTER_KEY=$(openssl rand -base64 32)   # 凭据加密主密钥，必须长期稳定
+OTP_ADMIN_TOKEN=$(openssl rand -base64 24)        # 可选，启用 /admin 管理后台
 ```
 
 启动：
@@ -170,14 +173,64 @@ agent 在服务器上绑定 `127.0.0.1:17373`。如何把它暴露到公网是**
 > ⚠️ **请妥善且稳定地保管 `OTP_AGENT_MASTER_KEY`。** 它用于解密你存储的邮箱凭据。丢
 > 失则每个邮箱都得重新录入；更改则之前存储的密钥再也无法解密。它永不落盘。
 
-## 密钥存储
+## 数据库与密钥存储
 
-邮箱凭据（QQ 授权码 / Outlook OAuth token / Gmail OAuth token）以 **AES-256-GCM** 加密后存于 `data/` 卷下
-的 SQLite 数据库中，密钥由 `OTP_AGENT_MASTER_KEY` 经 scrypt 派生。主密钥仅从环境变量
-读取、永不落盘——数据库被泄露但没有主密钥也无用。
+Agent 支持两种存储后端：
 
-未设置主密钥时，agent 会回退到**明文**存储并在启动时打印警告（仅适合一次性的本地测
-试）。一旦设置了密钥，已有的明文密钥会在下次启动时自动重新加密。
+- 设置 `DATABASE_URL=postgresql://...` 时使用 PostgreSQL，推荐生产环境使用 Neon 的 pooled URL。
+- 未设置 `DATABASE_URL` 时使用本地 SQLite，数据库默认位于 `data/agent.db`。
+
+邮箱凭据（QQ 授权码、通用 IMAP 应用密码、Outlook/Gmail OAuth Token）在写入数据库前使用
+**AES-256-GCM** 加密，密钥由 `OTP_AGENT_MASTER_KEY` 经 scrypt 派生。主密钥仅从环境变量读取，
+不会写入数据库。用户 Session 的原始 Bearer Token 同样不会写入数据库，只保存 SHA-256 哈希。
+
+> `OTP_AGENT_MASTER_KEY` 必须长期稳定。丢失或更改后，已存储的邮箱凭据将无法解密。
+> 未设置主密钥时仅适合一次性本地测试，Agent 会打印明文存储警告。
+
+## Shiper + Neon 部署
+
+推荐用于 Shiper 免费层的结构：Shiper 运行 Agent，Neon PostgreSQL 负责持久化数据，Chrome
+扩展安装在用户浏览器中。
+
+Shiper 项目配置：
+
+```text
+Deployment Method: Dockerfile
+Base Path: agent
+Dockerfile Path: Dockerfile
+Health Check Path: /health
+```
+
+最小环境变量：
+
+```env
+DATABASE_URL=postgresql://USER:PASSWORD@HOST-pooler.neon.tech/neondb?sslmode=require
+OTP_AGENT_MASTER_KEY=<稳定的随机主密钥>
+```
+
+可选但推荐：
+
+```env
+OTP_ADMIN_TOKEN=<独立管理令牌>
+NODE_OPTIONS=--max-old-space-size=128
+DB_POOL_MAX=3
+```
+
+Shiper 如果注入 `PORT`，Agent 会自动使用；否则回退到 `OTP_AGENT_PORT`，最后使用 `17373`。
+首次连接 PostgreSQL 时自动建表，无需手工执行 SQL。部署后检查：
+
+```bash
+curl -fsS https://YOUR-SHIPER-DOMAIN/health
+curl -fsS https://YOUR-SHIPER-DOMAIN/v1/status
+```
+
+`/health` 正常响应示例：
+
+```json
+{"ok":true,"database":true}
+```
+
+完整说明见 [`docs/deploy-shiper-neon.md`](docs/deploy-shiper-neon.md)。
 
 ## 管理 API（多租户）
 
