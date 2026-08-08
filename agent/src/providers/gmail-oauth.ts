@@ -1,4 +1,5 @@
 import { extractBestOtp } from "../otp/extract.js";
+import { extractBestVerificationLink } from "../verification/extract.js";
 import type { OtpStore } from "../otp/store.js";
 import { scopedKey } from "../http/auth.js";
 import { proxyFetch } from "../http/proxy-fetch.js";
@@ -88,12 +89,7 @@ function extractPlainText(payload: GmailMessagePart | undefined): string {
     const raw = p.body?.data ? base64UrlDecode(p.body.data) : "";
     if (!raw) continue;
     if (mime === "text/html") {
-      texts.push(
-        raw
-          .replace(/<style[\s\S]*?<\/style>/gi, " ")
-          .replace(/<script[\s\S]*?<\/script>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-      );
+      texts.push(raw);
     } else {
       texts.push(raw);
     }
@@ -366,24 +362,28 @@ export class GmailOAuthProvider {
     const subject = getHeader(headers, "Subject");
     const from = getHeader(headers, "From");
 
-    let best = extractBestOtp(subject || "");
+    let content = subject || "";
+    let best = extractBestOtp(content);
+    let link = extractBestVerificationLink(content);
 
-    if (!best) {
+    if (!best || !link) {
       const fullUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`;
       const fullRes = await proxyFetch(fullUrl, { headers: { authorization: `Bearer ${token}` } });
       if (fullRes.ok) {
         const fullMsg = (await fullRes.json()) as GmailMessage;
         const bodyText = extractPlainText(fullMsg.payload);
-        best = extractBestOtp(`${subject}\n${bodyText}`);
+        content = `${subject}\n${bodyText}`;
+        best = extractBestOtp(content);
+        link = extractBestVerificationLink(content);
       }
     }
 
     this.seenIds.add(id);
     if (this.seenIds.size > 200) this.seenIds = new Set([...this.seenIds].slice(-150));
     console.log(`[gmail-pubsub] message: ${subject} | OTP: ${best ? best.code : "none"}`);
-    if (!best) return;
+    if (!best && !link) return;
 
-    this.store.add({
+    if (best) this.store.add({
       provider: "gmail",
       userId: this.userId,
       code: best.code,
@@ -393,6 +393,10 @@ export class GmailOAuthProvider {
       subject: subject || undefined,
       messageId: id,
       folder: folderOf(msg),
+    });
+    if (link) this.store.addLink({
+      provider: "gmail", userId: this.userId, url: link.url, receivedAt,
+      from: from || undefined, subject: subject || undefined, messageId: `${id}:link`,
     });
   }
 
@@ -635,25 +639,29 @@ export class GmailOAuthProvider {
           const from = getHeader(headers, "From");
 
           // Try to extract OTP from subject first (most OTP emails have code in subject)
-          let best = extractBestOtp(subject || "");
+          let content = subject || "";
+          let best = extractBestOtp(content);
+          let link = extractBestVerificationLink(content);
 
-          // If no OTP in subject, fetch full message for body parsing
-          if (!best) {
+          // Fetch full content when either an OTP or a verification link is absent.
+          if (!best || !link) {
             const fullUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`;
             const fullRes = await proxyFetch(fullUrl, { headers: { authorization: `Bearer ${token}` } });
             if (fullRes.ok) {
               const fullMsg = (await fullRes.json()) as GmailMessage;
               const bodyText = extractPlainText(fullMsg.payload);
-              best = extractBestOtp(`${subject}\n${bodyText}`);
+              content = `${subject}\n${bodyText}`;
+              best = extractBestOtp(content);
+              link = extractBestVerificationLink(content);
             }
           }
 
           this.seenIds.add(id);
           if (this.seenIds.size > 200) this.seenIds = new Set([...this.seenIds].slice(-150));
           console.log(`[gmail-poll] message: ${subject} | OTP: ${best ? best.code : "none"}`);
-          if (!best) continue;
+          if (!best && !link) continue;
 
-          this.store.add({
+          if (best) this.store.add({
             provider: "gmail",
             userId: this.userId,
             code: best.code,
@@ -663,6 +671,10 @@ export class GmailOAuthProvider {
             subject: subject || undefined,
             messageId: id,
             folder: folderOf(msg),
+          });
+          if (link) this.store.addLink({
+            provider: "gmail", userId: this.userId, url: link.url, receivedAt,
+            from: from || undefined, subject: subject || undefined, messageId: `${id}:link`,
           });
         }
       }

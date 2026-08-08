@@ -1,4 +1,5 @@
 import { extractBestOtp } from "../otp/extract.js";
+import { extractBestVerificationLink } from "../verification/extract.js";
 import type { OtpStore } from "../otp/store.js";
 import { scopedKey } from "../http/auth.js";
 import { proxyFetch } from "../http/proxy-fetch.js";
@@ -314,12 +315,14 @@ export class OutlookOAuthProvider {
             msg.from?.emailAddress?.address || msg.from?.emailAddress?.name || (msg.from ? String(msg.from) : "");
           const preview = String(msg.bodyPreview || "");
           const bodyText = graphBodyText(msg.body);
-          const best = extractBestOtp(`${subject}\n${preview}\n${bodyText}`);
+          const rawContent = `${subject}\n${preview}\n${bodyText}\n${String((msg.body as any)?.content || "")}`;
+          const best = extractBestOtp(rawContent);
+          const link = extractBestVerificationLink(rawContent);
           this.seenIds.add(seenKey);
           if (this.seenIds.size > 200) this.seenIds = new Set([...this.seenIds].slice(-150));
-          if (!best) continue;
+          if (!best && !link) continue;
 
-          this.store.add({
+          if (best) this.store.add({
             provider: "outlook",
             userId: this.userId,
             code: best.code,
@@ -329,6 +332,11 @@ export class OutlookOAuthProvider {
             subject: subject || undefined,
             messageId: seenKey,
             folder,
+          });
+          if (link) this.store.addLink({
+            provider: "outlook", userId: this.userId, url: link.url, receivedAt,
+            from: from || undefined, subject: subject || undefined,
+            messageId: `${seenKey}:link`,
           });
         }
       }

@@ -2,6 +2,7 @@ import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 
 import { extractBestOtp } from "../otp/extract.js";
+import { extractBestVerificationLink } from "../verification/extract.js";
 import type { OtpStore, ProviderId } from "../otp/store.js";
 
 export type ImapAuth = {
@@ -341,9 +342,11 @@ export class ImapOtpWatcher {
       const parsed = await simpleParser(anyMsg.source as Buffer);
       const text = parsed.text?.trim() || "";
       const html = parsed.html ? stripHtml(String(parsed.html)) : "";
-      const raw = `${parsed.subject ?? ""}\n${text}\n${html}`;
+      const rawHtml = parsed.html ? String(parsed.html) : "";
+      const raw = `${parsed.subject ?? ""}\n${text}\n${html}\n${rawHtml}`;
       const best = extractBestOtp(raw);
-      if (!best) return;
+      const link = extractBestVerificationLink(raw);
+      if (!best && !link) return;
 
       const envelope = anyMsg.envelope as any;
       const from = parsed.from?.text || envelope?.from?.[0]?.address || undefined;
@@ -354,7 +357,7 @@ export class ImapOtpWatcher {
         ? new Date(internalDate).getTime()
         : Date.now();
 
-      this.opts.store.add({
+      if (best) this.opts.store.add({
         provider: this.opts.providerId,
         userId: this.opts.userId,
         account: this.opts.auth.user,
@@ -365,6 +368,11 @@ export class ImapOtpWatcher {
         subject,
         messageId: messageId ? `${folder}:${messageId}` : undefined,
         folder,
+      });
+      if (link) this.opts.store.addLink({
+        provider: this.opts.providerId, userId: this.opts.userId, account: this.opts.auth.user,
+        url: link.url, receivedAt, from, subject,
+        messageId: messageId ? `${folder}:${messageId}:link` : undefined,
       });
     } finally {
       lock?.release();

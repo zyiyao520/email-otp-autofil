@@ -263,6 +263,23 @@ export async function startServer() {
     res.json({ ok: true, item: items[0] ?? null, items });
   });
 
+  app.get("/v1/verification/latest", (req, res) => {
+    const userId = String(req.userId);
+    const maxAgeSec = Number(req.query.max_age ?? "600");
+    const maxAgeMs = Number.isFinite(maxAgeSec) ? Math.max(10, Math.min(3600, Math.floor(maxAgeSec))) * 1000 : 600_000;
+    const domain = typeof req.query.domain === "string" ? req.query.domain : undefined;
+    const requestedAt = Number(req.query.requested_at ?? 0);
+    const items = store.validLinks({ userId, maxAgeMs, domain, requestedAt: Number.isFinite(requestedAt) ? requestedAt : 0 });
+    res.json({ ok: true, item: items[0] ?? null, items });
+  });
+
+  app.post("/v1/verification/opened", (req, res) => {
+    const Body = z.object({ id: z.string().min(8) });
+    const body = Body.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ ok: false, error: "bad_request" });
+    res.json({ ok: store.markLinkOpened(body.data.id, String(req.userId)) });
+  });
+
   app.post("/v1/otp/consume", (req, res) => {
     const userId = String(req.userId);
     const Body = z.object({ id: z.string().min(8) });

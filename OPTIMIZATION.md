@@ -37,3 +37,11 @@ Content-Type: application/json
   "password": "app-password"
 }
 ```
+
+## Verification links and registration email selection
+
+- Agent extracts high-confidence HTTPS verification links from QQ/generic IMAP, Outlook Graph and Gmail messages.
+- `GET /v1/verification/latest` matches links by user, arrival time and current site.
+- `POST /v1/verification/opened` prevents repeated prompts.
+- The extension detects check-email pages and shows an explicit open/copy card; links are never opened without a user action.
+- Registration email fields receive a picker populated from the authenticated user's connected mailbox accounts. Login-only forms are excluded.

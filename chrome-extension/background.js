@@ -77,6 +77,28 @@ async function fetchLatestOtpForTab(tabUrl) {
   return item;
 }
 
+
+async function fetchVerificationLinkForTab(tabUrl, requestedAt = 0) {
+  const settings = await getSettings();
+  let domain = "";
+  try { domain = new URL(tabUrl).hostname; } catch {}
+  const query = new URLSearchParams({ max_age: String(Math.max(600, settings.maxAgeSec)), requested_at: String(requestedAt || 0) });
+  if (domain) query.set("domain", domain);
+  const json = await agentFetch(`/v1/verification/latest?${query.toString()}`, { method: "GET" });
+  return json.item || null;
+}
+
+async function connectedMailboxCandidates() {
+  const status = await agentFetch("/v1/status", { method: "GET" });
+  const config = status && status.config || {};
+  const candidates = [];
+  for (const item of (config.qq && config.qq.accounts) || []) if (item.email) candidates.push({ email: item.email, provider: "qq" });
+  for (const item of (config.imap && config.imap.accounts) || []) if (item.email) candidates.push({ email: item.email, provider: "imap" });
+  if (config.outlook && config.outlook.oauthEmail) candidates.push({ email: config.outlook.oauthEmail, provider: "outlook" });
+  if (config.gmail && config.gmail.oauthEmail) candidates.push({ email: config.gmail.oauthEmail, provider: "gmail" });
+  return [...new Map(candidates.map((item) => [item.email.toLowerCase(), item])).values()];
+}
+
 // --- New-OTP badge on the toolbar icon -------------------------------------
 
 const POLL_ALARM = "otp-poll";
@@ -162,6 +184,13 @@ async function autoFillTab(tabId, context = {}) {
   const { items } = await fetchOtpsForTab(tab.url || "");
   const requestedAt = Number(context.requestedAt || 0);
   const item = items.find((candidate) => Number(candidate && candidate.receivedAt || 0) >= requestedAt);
+  if (!item && context.allowLink) {
+    const link = await fetchVerificationLinkForTab(tab.url || "", requestedAt);
+    if (link) {
+      await chrome.tabs.sendMessage(tabId, { type: "OTP_VERIFICATION_LINK", item: link }).catch(() => null);
+      return { ok: true, kind: "link" };
+    }
+  }
   if (!item) return { ok: false, error: "no_matching_otp" };
   if (settings.autoFillDelayMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, Math.min(2000, settings.autoFillDelayMs)));
@@ -261,6 +290,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "OTP_CONTEXT_ACTIVE") {
       const tabId = _sender && _sender.tab && _sender.tab.id;
       if (tabId) void startFastAutoFill(tabId, msg.context || {});
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (msg.type === "BG_EMAIL_CANDIDATES") {
+      sendResponse({ ok: true, candidates: await connectedMailboxCandidates() });
+      return;
+    }
+
+    if (msg.type === "BG_OPEN_VERIFICATION_LINK") {
+      const item = msg.item || {};
+      let url;
+      try { url = new URL(String(item.url || "")); } catch { throw new Error("invalid_link"); }
+      if (url.protocol !== "https:" || url.username || url.password) throw new Error("unsafe_link");
+      await chrome.tabs.create({ url: url.toString(), active: true });
+      if (item.id) await agentFetch("/v1/verification/opened", { method: "POST", body: JSON.stringify({ id: item.id }) });
       sendResponse({ ok: true });
       return;
     }

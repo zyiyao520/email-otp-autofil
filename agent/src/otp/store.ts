@@ -17,6 +17,20 @@ export type OtpItem = {
   consumedAt?: number;
 };
 
+
+export type VerificationLinkItem = {
+  id: string;
+  userId?: string;
+  provider: ProviderId;
+  account?: string;
+  url: string;
+  receivedAt: number;
+  from?: string;
+  subject?: string;
+  messageId?: string;
+  openedAt?: number;
+};
+
 export type LatestQuery = {
   userId?: string; // restrict to one user's items (multi-tenant)
   providers?: ProviderId[];
@@ -27,7 +41,9 @@ export type LatestQuery = {
 
 export class OtpStore {
   private items: OtpItem[] = [];
+  private links: VerificationLinkItem[] = [];
   private seenMessageKeys = new Set<string>();
+  private seenLinkKeys = new Set<string>();
 
   add(input: Omit<OtpItem, "id">): OtpItem {
     // Reason: include user + account so the same message id arriving for two
@@ -53,6 +69,44 @@ export class OtpStore {
       this.seenMessageKeys = new Set([...this.seenMessageKeys].slice(-300));
     }
     return item;
+  }
+
+  addLink(input: Omit<VerificationLinkItem, "id">): VerificationLinkItem {
+    const uid = input.userId ?? "local";
+    const key = `${uid}:${input.provider}:${input.account ?? ""}:${input.messageId ?? input.url}`;
+    const existing = this.links.find((x) => `${x.userId ?? "local"}:${x.provider}:${x.account ?? ""}:${x.messageId ?? x.url}` === key);
+    if (existing) return existing;
+    this.seenLinkKeys.add(key);
+    const item = { ...input, id: crypto.randomUUID() };
+    this.links.unshift(item);
+    if (this.links.length > 100) this.links = this.links.slice(0, 100);
+    return item;
+  }
+
+  validLinks(q: { userId?: string; maxAgeMs: number; domain?: string; requestedAt?: number }): VerificationLinkItem[] {
+    const now = Date.now();
+    const domain = q.domain?.toLowerCase();
+    return this.links
+      .filter((it) => (!q.userId || (it.userId ?? "local") === q.userId) && !it.openedAt && now - it.receivedAt <= q.maxAgeMs && it.receivedAt >= (q.requestedAt ?? 0))
+      .map((item) => {
+        let score = Math.max(0, 1000 - Math.floor((now - item.receivedAt) / 100));
+        if (domain) {
+          const hay = `${item.subject ?? ""} ${item.from ?? ""} ${item.url}`.toLowerCase();
+          if (hay.includes(domain)) score += 2000;
+          const root = domain.split(".").slice(-2).join(".");
+          if (root && hay.includes(root)) score += 1000;
+        }
+        return { item, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.item);
+  }
+
+  markLinkOpened(id: string, userId: string): boolean {
+    const item = this.links.find((x) => x.id === id && (x.userId ?? "local") === userId);
+    if (!item) return false;
+    item.openedAt = Date.now();
+    return true;
   }
 
   consume(id: string, userId?: string): boolean {

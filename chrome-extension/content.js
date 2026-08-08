@@ -168,12 +168,88 @@ function toast(level, message) {
   setTimeout(() => el.remove(), 2200);
 }
 
+
+function extensionPanel(id) {
+  let host = document.getElementById(id);
+  if (host) return host.shadowRoot;
+  host = document.createElement("div");
+  host.id = id;
+  const shadow = host.attachShadow({ mode: "open" });
+  document.documentElement.appendChild(host);
+  return shadow;
+}
+
+function showVerificationLinkPrompt(item) {
+  const shadow = extensionPanel("email-otp-verification-link");
+  let target = "";
+  try { target = new URL(item.url).hostname; } catch { return; }
+  shadow.innerHTML = `<style>
+    .card{position:fixed;z-index:2147483647;right:18px;top:18px;width:320px;padding:16px;border-radius:14px;background:#fff;color:#172033;box-shadow:0 12px 40px rgba(0,0,0,.24);font:14px/1.45 system-ui,sans-serif;border:1px solid #dbe2ef}
+    .title{font-weight:700;font-size:15px}.meta{margin:7px 0 12px;color:#596579;overflow:hidden;text-overflow:ellipsis}.row{display:flex;gap:8px}.primary{background:#2563eb;color:#fff;border:0}.btn{padding:8px 11px;border-radius:9px;border:1px solid #cfd7e6;background:#fff;cursor:pointer}.close{position:absolute;right:9px;top:7px;border:0;background:none;cursor:pointer;font-size:18px}
+  </style><div class="card" role="dialog" aria-label="邮箱验证链接">
+    <button class="close" aria-label="关闭">×</button><div class="title">检测到邮箱验证链接</div>
+    <div class="meta">目标：${target}<br>${item.subject || "新验证邮件"}</div>
+    <div class="row"><button class="btn primary" id="open">安全打开</button><button class="btn" id="copy">复制链接</button></div>
+  </div>`;
+  shadow.querySelector(".close").onclick = () => shadow.host.remove();
+  shadow.querySelector("#open").onclick = async () => {
+    await chrome.runtime.sendMessage({ type: "BG_OPEN_VERIFICATION_LINK", item });
+    shadow.host.remove();
+  };
+  shadow.querySelector("#copy").onclick = async () => {
+    await navigator.clipboard.writeText(item.url);
+    toast("info", "验证链接已复制");
+  };
+}
+
+function isRegistrationEmailField(input) {
+  if (!(input instanceof HTMLInputElement) || !isVisible(input) || input.disabled || input.readOnly) return false;
+  const attrs = `${input.type} ${input.name} ${input.id} ${input.placeholder} ${input.autocomplete} ${input.getAttribute("aria-label") || ""}`.toLowerCase();
+  if (!/(email|e-mail|邮箱|郵箱)/i.test(attrs)) return false;
+  const context = `${location.pathname} ${document.title} ${input.form?.innerText || ""}`.slice(0, 5000);
+  if (/(login|log in|sign in|登录|登入)/i.test(context) && !/(register|sign up|signup|create|join|注册|註冊|创建|建立)/i.test(context)) return false;
+  return /(register|sign up|signup|create|join|account|注册|註冊|创建|建立|账号|帳號)/i.test(context);
+}
+
+let emailPickerTarget = null;
+async function showEmailCandidatePicker(input) {
+  if (emailPickerTarget === input && document.getElementById("email-otp-candidate-picker")) return;
+  const response = await chrome.runtime.sendMessage({ type: "BG_EMAIL_CANDIDATES" }).catch(() => null);
+  const candidates = response && response.ok && Array.isArray(response.candidates) ? response.candidates : [];
+  if (!candidates.length || !isVisible(input) || input.value) return;
+  emailPickerTarget = input;
+  const shadow = extensionPanel("email-otp-candidate-picker");
+  const rect = input.getBoundingClientRect();
+  const options = candidates.map((item, i) => `<button class="item" data-i="${i}"><b>${item.email}</b><span>${item.provider}</span></button>`).join("");
+  shadow.innerHTML = `<style>
+    .box{position:fixed;z-index:2147483647;left:${Math.max(8, Math.min(rect.left, innerWidth-340))}px;top:${Math.min(innerHeight-80, rect.bottom+7)}px;width:320px;padding:9px;border-radius:12px;background:#fff;border:1px solid #dbe2ef;box-shadow:0 10px 35px rgba(0,0,0,.2);font:13px system-ui,sans-serif}
+    .head{padding:4px 7px 8px;color:#536077}.item{width:100%;display:flex;justify-content:space-between;gap:10px;padding:9px;border:0;border-radius:8px;background:#fff;cursor:pointer;text-align:left}.item:hover{background:#eef4ff}.item span{color:#758197}
+  </style><div class="box"><div class="head">选择已连接的注册邮箱</div>${options}</div>`;
+  shadow.querySelectorAll(".item").forEach((button) => button.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    const item = candidates[Number(button.dataset.i)];
+    input.focus(); setNativeValue(input, item.email); shadow.host.remove(); emailPickerTarget = null;
+    toast("info", `已填入 ${item.email}`);
+  }));
+}
+
+document.addEventListener("focusin", (event) => {
+  const input = event.target;
+  if (isRegistrationEmailField(input)) void showEmailCandidatePicker(input);
+}, true);
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     if (!msg || typeof msg.type !== "string") return;
 
     if (msg.type === "OTP_TOAST") {
       toast(msg.level || "info", msg.message || "");
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (msg.type === "OTP_VERIFICATION_LINK") {
+      showVerificationLinkPrompt(msg.item || {});
       sendResponse({ ok: true });
       return;
     }
@@ -260,7 +336,15 @@ function detectOtpContext(requestedAt = 0) {
   }
   const effectiveRequestedAt = Date.now() < lastOtpRequestExpiresAt ? lastOtpRequestedAt : 0;
   const inputs = Array.from(document.querySelectorAll("input")).filter((el) => otpFieldScore(el) >= 45);
-  if (!inputs.length) return;
+  const pageText = `${document.title} ${document.body?.innerText || ""}`.slice(0, 12000);
+  const allowLink = /(check|open|verify|confirm|查看|检查|打開|打开|验证|驗證|确认|確認).{0,24}(email|inbox|mail|邮箱|郵箱|邮件|郵件)|(verification|confirmation|magic).{0,12}link/i.test(pageText);
+  if (!inputs.length && !allowLink) return;
+  if (allowLink && !effectiveRequestedAt) {
+    // The mail can arrive just before the SPA renders its check-email page.
+    // Keep a small grace window while still excluding unrelated older mail.
+    lastOtpRequestedAt = Date.now() - 15_000;
+    lastOtpRequestExpiresAt = Date.now() + 10 * 60_000;
+  }
   const oneChar = inputs.filter((el) => el.maxLength === 1);
   const expectedLength = oneChar.length >= 4 && oneChar.length <= 10
     ? oneChar.length
@@ -270,7 +354,7 @@ function detectOtpContext(requestedAt = 0) {
   lastContextSignature = signature;
   chrome.runtime.sendMessage({
     type: "OTP_CONTEXT_ACTIVE",
-    context: { url: location.href, title: document.title, expectedLength, requestedAt: effectiveRequestedAt }
+    context: { url: location.href, title: document.title, expectedLength, requestedAt: Date.now() < lastOtpRequestExpiresAt ? lastOtpRequestedAt : effectiveRequestedAt, allowLink }
   }).catch(() => {});
 }
 
