@@ -339,7 +339,7 @@ export async function startServer() {
   // ---- reveal secret -----------------------------------------------------
   app.post("/v1/secret/reveal", async (req, res) => {
     const Body = z.object({
-      kind: z.literal("qq"),
+      kind: z.enum(["qq", "imap"]),
       email: z.string().email(),
     });
     const body = Body.safeParse(req.body);

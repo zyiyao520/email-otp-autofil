@@ -386,6 +386,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return;
     }
 
+    if (msg.type === "BG_IMAP_CONFIG") {
+      const json = await agentFetch("/v1/imap/config", {
+        method: "POST",
+        body: JSON.stringify(msg.payload)
+      });
+      sendResponse({ ok: true, result: json });
+      return;
+    }
+
+    if (msg.type === "BG_IMAP_REMOVE") {
+      const json = await agentFetch("/v1/imap/remove", {
+        method: "POST",
+        body: JSON.stringify({ email: msg.email })
+      });
+      sendResponse({ ok: true, result: json });
+      return;
+    }
+
     if (msg.type === "BG_QQ_CLEAR") {
       const json = await agentFetch("/v1/qq/clear", { method: "POST", body: JSON.stringify({}) });
       sendResponse({ ok: true, result: json });
@@ -404,7 +422,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "BG_REVEAL_SECRET") {
       const json = await agentFetch("/v1/secret/reveal", {
         method: "POST",
-        body: JSON.stringify({ kind: "qq", email: msg.email })
+        body: JSON.stringify({ kind: msg.kind || "qq", email: msg.email })
       });
       sendResponse({ ok: true, value: json.value });
       return;

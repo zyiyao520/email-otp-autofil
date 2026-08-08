@@ -114,7 +114,7 @@ function accountKey(type, email) {
 }
 
 // ---- account list (sidebar) ----------------------------------------------
-const TYPE_ICON = { qq: "📩", outlook_oauth: "🔑" };
+const TYPE_ICON = { qq: "📩", imap: "✉️", outlook_oauth: "🔑", gmail_oauth: "📧" };
 
 function renderAccountList() {
   const list = $("accountList");
@@ -122,7 +122,7 @@ function renderAccountList() {
   list.innerHTML = "";
 
   for (const acc of accounts) {
-    const labelText = acc.email || (acc.type === "outlook_oauth" ? "Outlook OAuth" : "");
+    const labelText = acc.email || (acc.type === "outlook_oauth" ? "Outlook OAuth" : acc.type === "gmail_oauth" ? "Gmail OAuth" : "");
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "nav-item account-item";
@@ -170,6 +170,12 @@ function selectAdd() {
   $("acctEmail").value = "";
   $("acctEmail").disabled = false;
   $("acctSecret").value = "";
+  $("imapEmail").value = "";
+  $("imapHost").value = "";
+  $("imapPort").value = "993";
+  $("imapSecure").checked = true;
+  $("imapUsername").value = "";
+  $("imapPassword").value = "";
   $("acctRemove").hidden = true;
   setMsg("acctMsg", "");
   renderAccountFormByType("qq");
@@ -191,6 +197,19 @@ function selectAccount(acc) {
     // Gmail OAuth: show the OAuth panel with connect/clear actions
     $("acctTitle").querySelector("span:last-child").textContent = acc.email || "Gmail OAuth";
     renderAccountFormByType("gmail_oauth");
+    showPanel("panelAccount");
+  } else if (acc.type === "imap") {
+    $("acctTitle").querySelector("span:last-child").textContent = acc.email;
+    $("imapEmail").value = acc.email;
+    $("imapEmail").disabled = true;
+    $("imapHost").value = acc.host || "";
+    $("imapPort").value = String(acc.port || 993);
+    $("imapSecure").checked = acc.secure !== false;
+    $("imapUsername").value = acc.username || acc.email;
+    $("imapPassword").value = "";
+    setMsg("acctMsg", "");
+    renderAccountFormByType("imap");
+    $("acctRemove").hidden = false;
     showPanel("panelAccount");
   } else {
     // QQ account: show the edit form
@@ -215,14 +234,16 @@ function setText(id, text) {
 // Toggle form fields for QQ vs Outlook OAuth vs Gmail OAuth.
 async function renderAccountFormByType(type) {
   const isQq = type === "qq";
+  const isImap = type === "imap";
   const isOutlook = type === "outlook_oauth";
   const isGmail = type === "gmail_oauth";
   $("qqFields").hidden = !isQq;
+  $("imapFields").hidden = !isImap;
   $("outlookOauthFields").hidden = !isOutlook;
   $("gmailOauthFields").hidden = !isGmail;
   // Keep acctActions visible for all types; hide Save for OAuth types.
   $("acctActions").hidden = false;
-  $("acctSave").hidden = !isQq;
+  $("acctSave").hidden = !(isQq || isImap);
   $("acctRemove").hidden = true; // only shown for existing QQ accounts via selectAccount
   if (isOutlook) {
     // Switch user to OAuth mode on the server, then refresh state.
@@ -565,6 +586,8 @@ async function refreshStatus() {
     const next = [];
     const qq = (cfg.qq && cfg.qq.accounts) || [];
     for (const a of qq) next.push({ type: "qq", email: a.email, configured: !!a.configured });
+    const imap = (cfg.imap && cfg.imap.accounts) || [];
+    for (const a of imap) next.push({ type: "imap", email: a.email, host: a.host, port: a.port, secure: a.secure, username: a.username, configured: !!a.configured });
     // Outlook OAuth is a single account (no email in list, just the type).
     const ol = cfg.outlook || {};
     if (ol.oauthConnected) {
@@ -589,10 +612,44 @@ async function refreshStatus() {
   }
 }
 
+const IMAP_HOST_PRESETS = {
+  "163.com": "imap.163.com",
+  "126.com": "imap.126.com",
+  "yeah.net": "imap.yeah.net"
+};
+
+function applyImapPreset() {
+  const email = $("imapEmail").value.trim().toLowerCase();
+  const domain = email.includes("@") ? email.split("@").pop() : "";
+  if (!$("imapHost").value.trim() && IMAP_HOST_PRESETS[domain]) $("imapHost").value = IMAP_HOST_PRESETS[domain];
+  if (!$("imapUsername").value.trim() && email) $("imapUsername").value = email;
+  if (!$("imapPort").value) $("imapPort").value = "993";
+}
+
 // ---- save / remove account -----------------------------------------------
 async function saveAccount() {
   const type = $("acctType").value;
   if (type === "outlook_oauth") return; // OAuth has its own save button
+
+  if (type === "imap") {
+    const email = $("imapEmail").value.trim();
+    const host = $("imapHost").value.trim();
+    const port = Number($("imapPort").value);
+    const secure = $("imapSecure").checked;
+    const username = $("imapUsername").value.trim() || email;
+    const password = $("imapPassword").value.trim();
+    if (!email || !host || !Number.isInteger(port) || port < 1 || port > 65535 || !password) {
+      setMsg("acctMsg", T("failed")); return;
+    }
+    setMsg("acctMsg", T("verifying")); $("acctSave").disabled = true;
+    try {
+      const r = await bg({ type: "BG_IMAP_CONFIG", payload: { email, host, port, secure, username, password } });
+      if (r && r.ok) { setMsg("acctMsg", T("saved")); await refreshStatus(); selectAccount({ type, email, host, port, secure, username, configured: true }); }
+      else setMsg("acctMsg", verifyErrorText(r && r.error));
+    } catch (e) { setMsg("acctMsg", T("failed_with", { err: String(e && e.message ? e.message : e) })); }
+    finally { $("acctSave").disabled = false; }
+    setTimeout(() => setMsg("acctMsg", ""), 3500); return;
+  }
 
   const email = $("acctEmail").value.trim();
   const secret = $("acctSecret").value.trim();
@@ -632,11 +689,11 @@ function verifyErrorText(err) {
 async function removeAccount() {
   if (!selected || !selected.email) return;
   const { type, email } = selected;
-  if (type !== "qq") return; // Only QQ accounts can be removed this way
+  if (type !== "qq" && type !== "imap") return;
 
   setMsg("acctMsg", T("removing"));
   try {
-    const r = await bg({ type: "BG_QQ_REMOVE", email });
+    const r = await bg({ type: type === "imap" ? "BG_IMAP_REMOVE" : "BG_QQ_REMOVE", email });
     if (r && r.ok) {
       setMsg("acctMsg", T("cleared"));
       await refreshStatus();
@@ -899,6 +956,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("refreshStatus").addEventListener("click", refreshStatus);
   $("saveExt").addEventListener("click", saveExtSettings);
   $("acctType").addEventListener("change", () => renderAccountFormByType($("acctType").value));
+  $("imapEmail").addEventListener("blur", applyImapPreset);
+  $("imapEmail").addEventListener("change", applyImapPreset);
   $("acctSave").addEventListener("click", saveAccount);
   $("acctRemove").addEventListener("click", removeAccount);
 

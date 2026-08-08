@@ -124,6 +124,7 @@
             <label for="acctType" data-i18n="account_type">Account type</label>
             <select id="acctType">
               <option value="qq" data-i18n="type_qq">QQ Mail (IMAP)</option>
+              <option value="imap" data-i18n="type_imap">其他邮箱（IMAP）</option>
               <option value="outlook_oauth" data-i18n="type_outlook_oauth">Outlook (OAuth)</option>
               <option value="gmail_oauth" data-i18n="type_gmail_oauth">Gmail (OAuth)</option>
             </select>
@@ -145,6 +146,34 @@
                 获取途径：登录 <a href="https://mail.qq.com" target="_blank" rel="noopener">QQ 邮箱网页版</a> →
                 设置 → 账号 → 找到「POP3/IMAP/SMTP 服务」→ 开启「IMAP/SMTP 服务」→
                 按提示用手机发送短信验证 → 生成的授权码填入此处。
+              </div>
+            </div>
+
+            <!-- Generic IMAP fields (163/126/yeah.net and other providers) -->
+            <div id="imapFields" hidden>
+              <label for="imapEmail" data-i18n="account_email">Email</label>
+              <input id="imapEmail" type="email" placeholder="you@163.com" />
+              <label for="imapHost" data-i18n="imap_host">IMAP 服务器</label>
+              <input id="imapHost" placeholder="imap.163.com" />
+              <div class="row">
+                <div style="flex:1;">
+                  <label for="imapPort" data-i18n="imap_port">端口</label>
+                  <input id="imapPort" type="number" min="1" max="65535" value="993" />
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;margin-top:28px;">
+                  <input id="imapSecure" type="checkbox" checked style="width:auto;" />
+                  <span data-i18n="imap_secure">SSL/TLS</span>
+                </label>
+              </div>
+              <label for="imapUsername" data-i18n="imap_username">登录用户名（通常为完整邮箱）</label>
+              <input id="imapUsername" placeholder="留空则使用邮箱地址" />
+              <label for="imapPassword" data-i18n="imap_password">客户端授权码 / 应用专用密码</label>
+              <div class="pwd-wrap">
+                <input id="imapPassword" type="password" autocomplete="new-password" />
+                <button type="button" class="pwd-toggle" data-toggle="imapPassword" aria-label="Show password"></button>
+              </div>
+              <div class="hint help-block" data-i18n="imap_help">
+                163：imap.163.com；126：imap.126.com；yeah.net：imap.yeah.net。端口均为 993，并开启 SSL/TLS。请使用邮箱后台生成的客户端授权码，不要填写网页登录密码。
               </div>
             </div>
 

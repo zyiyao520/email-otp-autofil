@@ -226,6 +226,12 @@
           </div>
           <div class="msg" id="settingsMsg" style="margin-top:8px;"></div>
 
+          <h2 style="margin-top:22px;">✉️ 其他邮箱（通用 IMAP）</h2>
+          <div class="msg" style="margin-bottom:8px;">
+            163、126、yeah.net、企业邮箱及其他兼容 IMAP 的邮箱无需在管理员页面配置全局密钥。用户注册并登录扩展后，在「添加账户 → 其他邮箱（IMAP）」中填写邮箱服务器、端口、用户名和客户端授权码即可。<br />
+            常用配置：163 使用 <code>imap.163.com:993</code>，126 使用 <code>imap.126.com:993</code>，yeah.net 使用 <code>imap.yeah.net:993</code>，均开启 SSL/TLS。密码栏应填写邮箱后台生成的客户端授权码或应用专用密码，不要填写网页登录密码。
+          </div>
+
           <h2 style="margin-top:22px;">📨 Outlook OAuth</h2>
           <div class="msg" style="margin-bottom:4px;">
             在 Azure 注册一个支持「任何 Entra ID 租户 + 个人 Microsoft 账户」的应用，把它配置为 Mobile/Desktop public client，
@@ -351,7 +357,7 @@
       }
 
       // ---- users ----
-      const MAIL_ICON = { qq: "📩", outlook_oauth: "🔑", gmail_oauth: "📧" };
+      const MAIL_ICON = { qq: "📩", imap: "✉️", outlook_oauth: "🔑", gmail_oauth: "📧" };
       function mailboxBadges(list) {
         if (!list || !list.length) return '<span style="color:var(--faint)">—</span>';
         return list.map((m) => {
