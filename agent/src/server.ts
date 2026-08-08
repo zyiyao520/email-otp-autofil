@@ -223,7 +223,10 @@ export async function startServer() {
         pollIntervalMs: cfg.pollIntervalMs,
         includeSpam: cfg.includeSpam,
         qq: { accounts: qqAccounts },
-        imap: { accounts: cfg.imap.accounts.map((a) => ({ email: a.email, host: a.host, port: a.port, secure: a.secure, username: a.username, configured: true })) },
+        imap: { accounts: await Promise.all(cfg.imap.accounts.map(async (a) => ({
+          email: a.email, host: a.host, port: a.port, secure: a.secure, username: a.username,
+          configured: Boolean(await secretGet(mgr.secretKeyFor("imap", a.email))),
+        }))) },
         outlook: {
           mode: cfg.outlook.mode,
           // Client ID is now an instance-wide admin setting (not per-user).

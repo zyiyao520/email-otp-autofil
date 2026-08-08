@@ -196,6 +196,14 @@ export class ProviderManager {
   }
 
   async addImapAccount(account: { email: string; host: string; port: number; secure: boolean; username: string }): Promise<void> {
+    // Replacing an account with the same email may change its host, port,
+    // TLS mode, username, or password. Stop the old watcher so reconcile()
+    // cannot incorrectly keep a connection that uses the previous settings.
+    const existing = this.imap.get(account.email);
+    if (existing) {
+      existing.watcher.stop();
+      this.imap.delete(account.email);
+    }
     await this.updateConfig((c) => {
       c.imap.accounts = c.imap.accounts.filter((a) => a.email !== account.email);
       c.imap.accounts.push(account);

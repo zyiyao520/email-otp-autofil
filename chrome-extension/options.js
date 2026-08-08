@@ -171,6 +171,7 @@ function selectAdd() {
   $("acctEmail").disabled = false;
   $("acctSecret").value = "";
   $("imapEmail").value = "";
+  $("imapEmail").disabled = false;
   $("imapHost").value = "";
   $("imapPort").value = "993";
   $("imapSecure").checked = true;
