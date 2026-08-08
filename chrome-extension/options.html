@@ -1,0 +1,194 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Email OTP Autofill Settings</title>
+    <style>
+      body { max-width: 720px; margin: 0 auto; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="app-header">
+        <div class="brand">
+          <span class="brand-logo">⚙️</span>
+          <h1 data-i18n="settings_title">Settings</h1>
+        </div>
+        <select id="uiLang" class="lang-select" aria-label="Language">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+
+      <!-- multi-tenant: logged-in bar (hidden unless authenticated) -->
+      <div id="authBar" class="auth-bar" hidden>
+        <span id="authWho" class="muted"></span>
+        <button id="logoutBtn" data-i18n="logout">Log out</button>
+      </div>
+
+      <!-- multi-tenant: login / register panel (hidden unless login required) -->
+      <div id="loginPanel" class="card login-card" hidden>
+        <div class="card-title"><span class="ic">🔐</span><span id="loginTitle" data-i18n="login">Log in</span></div>
+        <div class="card-sub" data-i18n="login_required">This is a shared instance. Log in or create an account.</div>
+        <label for="authUser" data-i18n="username">Username</label>
+        <input id="authUser" autocomplete="username" />
+        <label for="authPass" data-i18n="password">Password</label>
+        <div class="pwd-wrap">
+          <input id="authPass" type="password" autocomplete="current-password" />
+          <button type="button" class="pwd-toggle" data-toggle="authPass" aria-label="Show password"></button>
+        </div>
+        <div id="authInviteRow" hidden>
+          <label for="authInvite" data-i18n="invite_code">Invite code</label>
+          <input id="authInvite" autocomplete="off" />
+        </div>
+        <div class="row" style="margin-top:14px;">
+          <button id="authSubmit" class="primary" data-i18n="login">Log in</button>
+          <span id="authMsg" class="status-msg"></span>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <a href="#" id="authToggle" data-i18n="switch_to_register">Need an account? Register</a>
+        </div>
+
+        <!-- connection / server settings, editable before login -->
+        <details class="advanced" id="connDetails">
+          <summary data-i18n="server_settings">Server</summary>
+          <label for="loginBaseUrl" data-i18n="base_url">Agent Base URL</label>
+          <input id="loginBaseUrl" placeholder="https://otp.razet.me" />
+          <div class="hint" data-i18n="base_url_hint2">Default is the public instance. Self-hosters can point this at their own domain.</div>
+          <div class="row" style="margin-top:12px;">
+            <button id="loginSaveConn" data-i18n="save_connection">Save & connect</button>
+            <span id="loginConnMsg" class="status-msg"></span>
+          </div>
+        </details>
+      </div>
+
+      <div class="settings-layout" hidden>
+        <!-- ============ Left: sidebar ============ -->
+        <aside class="account-sidebar">
+          <button id="navAgent" class="nav-item" type="button">
+            <span class="nav-ic">🛰️</span>
+            <span class="nav-label" data-i18n="agent_settings">Agent Settings</span>
+          </button>
+
+          <div class="sidebar-section-title" data-i18n="accounts">Accounts</div>
+          <div id="accountList" class="account-list">
+            <!-- account nav-items injected by options.js -->
+          </div>
+          <div id="accountsEmpty" class="sidebar-empty" data-i18n="empty_accounts" hidden>No accounts yet.</div>
+
+          <button id="navAdd" class="nav-item nav-add" type="button">
+            <span class="nav-ic">＋</span>
+            <span class="nav-label" data-i18n="add_account">Add account</span>
+          </button>
+        </aside>
+
+        <!-- ============ Right: detail panels ============ -->
+        <section class="account-detail">
+          <!-- Empty state -->
+          <div id="panelEmpty" class="detail-empty" hidden>
+            <div class="detail-empty-ic">📭</div>
+            <div class="detail-empty-title" data-i18n="no_account_selected">No account selected</div>
+            <div class="detail-empty-sub" data-i18n="select_or_add">Select an account on the left, or add a new one.</div>
+          </div>
+
+          <!-- Agent settings -->
+          <div id="panelAgent" class="panel" hidden>
+            <div class="card-title"><span class="ic">🛰️</span><span data-i18n="agent">Agent</span></div>
+            <div id="agentStatus" class="card-sub" data-i18n="agent_status_checking">Checking…</div>
+
+            <label for="maxAgeSec" data-i18n="max_age">Max OTP Age (seconds)</label>
+            <input id="maxAgeSec" type="number" min="10" max="600" />
+
+            <label class="check" for="includeSpam">
+              <input id="includeSpam" type="checkbox" />
+              <span data-i18n="include_spam">Include Spam/Junk folders</span>
+            </label>
+
+            <div class="hint" data-i18n="conn_locked_hint">To change the server address, log out first.</div>
+
+            <div class="row" style="margin-top:14px;">
+              <button id="saveExt" class="primary" data-i18n="save_ext">Save Extension Settings</button>
+              <span id="saveExtMsg" class="status-msg"></span>
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button id="refreshStatus" data-i18n="refresh">Refresh</button>
+            </div>
+          </div>
+
+          <!-- Add / edit a mailbox account (QQ or Outlook OAuth) -->
+          <div id="panelAccount" class="panel" hidden>
+            <div id="acctTitle" class="card-title"><span class="ic">📩</span><span data-i18n="add_account_title">Add a new account</span></div>
+
+            <label for="acctType" data-i18n="account_type">Account type</label>
+            <select id="acctType">
+              <option value="qq" data-i18n="type_qq">QQ Mail (IMAP)</option>
+              <option value="outlook_oauth" data-i18n="type_outlook_oauth">Outlook (OAuth)</option>
+              <option value="gmail_oauth" data-i18n="type_gmail_oauth">Gmail (OAuth)</option>
+            </select>
+
+            <!-- QQ fields (shown when type=qq) -->
+            <div id="qqFields">
+              <label for="acctEmail" data-i18n="account_email">Email</label>
+              <input id="acctEmail" placeholder="you@example.com" />
+
+              <label for="acctSecret"><span id="acctSecretLabel" data-i18n="qq_authcode">QQ IMAP 授权码</span></label>
+              <div class="pwd-wrap">
+                <input id="acctSecret" type="password" placeholder="" />
+                <button type="button" class="pwd-toggle" data-toggle="acctSecret" aria-label="Show password"></button>
+              </div>
+              <div id="acctNoEcho" class="hint" data-i18n="qq_no_echo">出于安全考虑，保存后不会回显授权码。</div>
+
+              <!-- QQ help -->
+              <div class="hint help-block" id="qqHowto">
+                获取途径：登录 <a href="https://mail.qq.com" target="_blank" rel="noopener">QQ 邮箱网页版</a> →
+                设置 → 账号 → 找到「POP3/IMAP/SMTP 服务」→ 开启「IMAP/SMTP 服务」→
+                按提示用手机发送短信验证 → 生成的授权码填入此处。
+              </div>
+            </div>
+
+            <!-- Outlook OAuth fields (shown when type=outlook_oauth) -->
+            <div id="outlookOauthFields" hidden>
+              <div id="outlookState" class="card-sub" data-i18n="oauth_not_connected">OAuth not connected</div>
+
+              <div class="row" style="margin-top:12px;" id="outlookDisconnectedActions">
+                <button id="outlookAuthStart" class="primary" data-i18n="start_signin">Start Sign-in</button>
+                <button id="outlookClear" class="danger" data-i18n="clear">Clear</button>
+              </div>
+              <div class="row" style="margin-top:12px;" id="outlookConnectedActions" hidden>
+                <button id="outlookDisconnect" class="danger" data-i18n="disconnect">Disconnect</button>
+              </div>
+              <div class="hint" id="deviceCodeMsg"></div>
+              <span id="outlookOauthMsg" class="status-msg"></span>
+            </div>
+
+            <!-- Gmail OAuth fields (shown when type=gmail_oauth) -->
+            <div id="gmailOauthFields" hidden>
+              <div id="gmailState" class="card-sub" data-i18n="oauth_not_connected">OAuth not connected</div>
+
+              <div class="row" style="margin-top:12px;" id="gmailDisconnectedActions">
+                <button id="gmailAuthStart" class="primary" data-i18n="start_signin">Start Sign-in</button>
+                <button id="gmailClear" class="danger" data-i18n="clear">Clear</button>
+              </div>
+              <div class="row" style="margin-top:12px;" id="gmailConnectedActions" hidden>
+                <button id="gmailDisconnect" class="danger" data-i18n="disconnect">Disconnect</button>
+              </div>
+              <div class="hint" id="gmailDeviceCodeMsg"></div>
+              <span id="gmailOauthMsg" class="status-msg"></span>
+            </div>
+
+            <div class="row" style="margin-top:12px;" id="acctActions">
+              <button id="acctSave" class="primary" data-i18n="save_account">Save account</button>
+              <button id="acctRemove" class="danger" data-i18n="remove_account" hidden>Remove</button>
+              <span id="acctMsg" class="status-msg"></span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="i18n.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

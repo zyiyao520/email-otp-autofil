@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlg0wcV2O8bMG6WQcm/7A0X7vwWR8INkO/z5k6HQuBkyYxejnA6onreML9qUIxxweDEqe6s5U2R8CWWTDE72itr8wZG0MNY11t5HbRztbT8hHI2E//kfd2WBBI+Ih/2d80gdv/bdRsyHFrXz2ELJyIIcduMEWFxcDYqzKjYD45HJTuk/+W94XQixg2m3ZB1vTa0W7hVeHNLnk7Y/hKz0YI33Zrh3exPeh99TXKo/okGBqOhizL/ePk4VZGPdHyFxlh//pZ2yGilVKvsJ0qzfAyEWaTdtnWWC1pOhmaZVNii8H4wrftI8ugXddPaowhdtk1+TNrU4DQ3/6ahgTKUz9BwIDAQAB",
+  "name": "Email OTP Autofill",
+  "version": "0.2.0",
+  "description": "Context-aware email OTP autofill for QQ, Outlook, Gmail and generic IMAP.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://otp.razet.me/*",
+    "http://127.0.0.1:17373/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Email OTP Autofill",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "fill_otp": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Period",
+        "mac": "Command+Shift+Period"
+      },
+      "description": "Fill OTP from email"
+    }
+  }
+}

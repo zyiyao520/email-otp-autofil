@@ -1,0 +1,29 @@
+export const APP_ID = "email-otp-autofill";
+
+export const AGENT_HOST = process.env.OTP_AGENT_HOST?.trim() || "127.0.0.1";
+export const AGENT_PORT = (() => {
+  const raw = process.env.OTP_AGENT_PORT?.trim();
+  if (!raw) return 17373;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n >= 65536) return 17373;
+  return Math.floor(n);
+})();
+
+// Cheap CSRF-ish guard: websites can't send custom headers without CORS preflight.
+export const CLIENT_HEADER_NAME = "x-otp-agent-client";
+export const CLIENT_HEADER_VALUE = APP_ID;
+
+// Master key for at-rest encryption of stored email credentials. NEVER written
+// to disk; a leaked database is useless without it. Required in production.
+export const MASTER_KEY = process.env.OTP_AGENT_MASTER_KEY?.trim() || "";
+
+// Admin token for the /admin panel + /v1/admin/* API. When unset, the admin
+// surface is disabled (returns 401).
+export const ADMIN_TOKEN = process.env.OTP_ADMIN_TOKEN?.trim() || "";
+
+const HOME = process.env.HOME?.trim() || "/tmp";
+
+export const DATA_DIR =
+  process.env.OTP_AGENT_DATA_DIR?.trim() ||
+  process.env.XDG_CONFIG_HOME?.trim() ||
+  `${HOME}/.config/${APP_ID}`;

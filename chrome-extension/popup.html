@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Email OTP Autofill</title>
+    <style>
+      body { width: 340px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="app-header">
+        <div class="brand">
+          <span class="brand-logo">🔐</span>
+          <h1 data-i18n="app_title">Email OTP Autofill</h1>
+        </div>
+        <select id="uiLang" class="lang-select" aria-label="Language">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <div class="otp-stage">
+          <div id="source" class="source-tag" hidden>
+            <span id="sourceIcon" class="source-icon">📩</span>
+            <span id="sourceName">QQ</span>
+          </div>
+          <div class="otp-code-row">
+            <button id="otpPrev" class="otp-nav" type="button" hidden aria-label="Previous code" data-i18n-aria="prev_otp">‹</button>
+            <div id="code" class="code copyable" title="Click to copy">------</div>
+            <button id="otpNext" class="otp-nav" type="button" hidden aria-label="Next code" data-i18n-aria="next_otp">›</button>
+          </div>
+          <div id="otpIndicator" class="otp-indicator" hidden></div>
+          <div id="otpBar" class="otp-bar" aria-hidden="true" hidden>
+            <div id="otpBarFill" class="otp-bar-fill"></div>
+          </div>
+          <div id="meta" class="muted" data-i18n="waiting">Waiting…</div>
+        </div>
+
+        <div class="otp-actions">
+          <button id="fill" class="primary" data-i18n="fill">Fill</button>
+          <button id="copy" data-i18n="copy">Copy</button>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="row">
+          <span id="agent" class="pill">Agent: ?</span>
+          <button id="settings" class="ghost-icon" data-i18n="settings">Settings</button>
+        </div>
+      </div>
+    </main>
+    <script src="i18n.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
